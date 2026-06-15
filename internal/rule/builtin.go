@@ -234,8 +234,20 @@ func validPhone(m string) bool {
 // validEmail は予約済みドメイン（RFC 2606/6761）等のダミー値を除外する。
 func validEmail(m string) bool {
 	at := strings.LastIndexByte(m, '@')
+	if at <= 0 || at == len(m)-1 {
+		return false
+	}
+	local := m[:at]
+	if strings.HasPrefix(local, ".") || strings.HasSuffix(local, ".") || strings.Contains(local, "..") {
+		return false
+	}
 	domain := strings.ToLower(m[at+1:])
 	labels := strings.Split(domain, ".")
+	for _, label := range labels {
+		if label == "" || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return false
+		}
+	}
 	tld := labels[len(labels)-1]
 	switch tld {
 	case "test", "invalid", "localhost", "example", "local":

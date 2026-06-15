@@ -128,8 +128,11 @@ func TestEmailRule(t *testing.T) {
 	}{
 		{"通常", "contact: taro.yamada@gmail.com", []string{"email-address"}},
 		{"全角アット", "taro＠gmail.com", []string{"email-address"}},
+		{"ドットとプラスとサブドメイン", "contact: user.name+tag@sub-domain.company.co.jp", []string{"email-address"}},
 		{"予約ドメイン example は除外", "user@example.com / user@sub.example.co.jp", nil},
 		{"予約 TLD test は除外", "user@foo.test", nil},
+		{"Ruby インスタンス変数チェーンは除外", "@dates_by_month ||= (@participant.starts_on..@participant.finishes_on_by_status).group_by(&:beginning_of_month)", nil},
+		{"ローカル部の連続ドットは除外", "contact: taro..yamada@gmail.com", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
