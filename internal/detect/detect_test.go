@@ -132,6 +132,7 @@ func TestEmailRule(t *testing.T) {
 		{"予約ドメイン example は除外", "user@example.com / user@sub.example.co.jp", nil},
 		{"予約 TLD test は除外", "user@foo.test", nil},
 		{"Ruby インスタンス変数チェーンは除外", "@dates_by_month ||= (@participant.starts_on..@participant.finishes_on_by_status).group_by(&:beginning_of_month)", nil},
+		{"Ruby unary minus receiver is not an email", "number_to_currency(-@bill.withholding_tax(worked_on))", nil},
 		{"ローカル部の連続ドットは除外", "contact: taro..yamada@gmail.com", nil},
 	}
 	for _, tt := range tests {
@@ -149,7 +150,10 @@ func TestCreditCardRule(t *testing.T) {
 	}{
 		{"Visa 区切りあり", "card: 4111-1111-1111-1111", []string{"credit-card"}},
 		{"JCB 区切りなし", "3530111333300000", []string{"credit-card"}},
+		{"slash-prefixed separated card is still detected", "/4111-1111-1111-1111", []string{"credit-card"}},
 		{"Luhn 不正", "4111-1111-1111-1112", nil},
+		{"URL article ID is not a card", "https://support.otetsutabi.com/hc/ja/articles/46129829524505", nil},
+		{"URL article ID with shorter Luhn-passing number is not a card", "https://support.otetsutabi.com/hc/ja/articles/4608392522393", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -112,7 +112,8 @@ func Builtin() []Rule {
 				return checksum.CreditCard(stripSeparators(m))
 			},
 			Patterns: []Pattern{
-				{Re: dg(`\d(?:[- ]?\d){12,18}`), Base: High},
+				{Re: regexp.MustCompile(`(?:^|[^0-9/])(\d(?:[- ]?\d){12,18})(?:[^0-9]|$)`), Base: High},
+				{Re: dg(`\d(?:[- ]?\d){0,5}[- ]\d(?:[- ]?\d){6,17}`), Base: High},
 			},
 		},
 		{
@@ -241,6 +242,9 @@ func validEmail(m string) bool {
 	if strings.HasPrefix(local, ".") || strings.HasSuffix(local, ".") || strings.Contains(local, "..") {
 		return false
 	}
+	if !containsASCIIAlnum(local) {
+		return false
+	}
 	domain := strings.ToLower(m[at+1:])
 	labels := strings.Split(domain, ".")
 	for _, label := range labels {
@@ -254,4 +258,13 @@ func validEmail(m string) bool {
 		return false
 	}
 	return !slices.Contains(labels, "example")
+}
+
+func containsASCIIAlnum(s string) bool {
+	for _, r := range s {
+		if (r >= '0' && r <= '9') || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
+			return true
+		}
+	}
+	return false
 }
