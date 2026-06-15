@@ -231,6 +231,22 @@ func TestDigitRulesRejectNearbyNegativeContext(t *testing.T) {
 	}
 }
 
+func TestDigitRulesAllowIdentityWordsContainingNegativeCharacters(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"口座番号と名義", "口座番号: 1234567 名義: 山田太郎", []string{"jp-bank-account"}},
+		{"保険者番号と本人確認", "保険者番号: 12345678 本人確認済み", []string{"jp-health-insurance"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
 func TestDigitRulesRequireNearbyPositiveContext(t *testing.T) {
 	d := newDetector(t, "")
 	assertRules(t, d.ScanLine("f.txt", 1, "口座番号: 1234567"), "jp-bank-account")
