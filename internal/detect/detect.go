@@ -2,6 +2,7 @@
 package detect
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/baneido/jp-pii-detecter/internal/config"
@@ -102,6 +103,18 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 			seen[key] = true
 		}
 	}
+	sort.SliceStable(findings, func(i, j int) bool {
+		if findings[i].File != findings[j].File {
+			return findings[i].File < findings[j].File
+		}
+		if findings[i].Line != findings[j].Line {
+			return findings[i].Line < findings[j].Line
+		}
+		if findings[i].Column != findings[j].Column {
+			return findings[i].Column < findings[j].Column
+		}
+		return findings[i].end < findings[j].end
+	})
 	return findings
 }
 

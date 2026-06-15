@@ -520,3 +520,16 @@ func TestScanContentDoesNotDuplicateInlineContext(t *testing.T) {
 	fs := d.ScanContent("f.txt", "口座番号: 1234567\n備考")
 	assertRules(t, fs, "jp-bank-account")
 }
+
+func TestScanContentPreservesDocumentOrderWithAdjacentLineFindings(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanContent("f.txt", "口座番号:\n1234567\nTEL: 090-1234-5678")
+	assertRules(t, fs, "jp-bank-account", "jp-phone-number")
+
+	if fs[0].RuleID != "jp-bank-account" || fs[0].Line != 2 {
+		t.Fatalf("first finding = %s at line %d, want jp-bank-account at line 2", fs[0].RuleID, fs[0].Line)
+	}
+	if fs[1].RuleID != "jp-phone-number" || fs[1].Line != 3 {
+		t.Fatalf("second finding = %s at line %d, want jp-phone-number at line 3", fs[1].RuleID, fs[1].Line)
+	}
+}
