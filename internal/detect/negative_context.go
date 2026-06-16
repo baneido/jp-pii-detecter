@@ -83,6 +83,11 @@ func (d *Detector) hasNegativeContextNear(s string, start, end, radius int, rune
 	return d.containsAnyContext(contextWindow(s, start, end, radius, runes), generic)
 }
 
+// isCurrencyPrefix / isCurrencySuffix / isCounterSuffix は
+// rule.digitRuleNegativeContext（internal/rule/builtin.go）の各語を
+// 単位の種別に分類する。どれにも該当しない語は hasNegativeContextNear で
+// 「汎用」として近傍一致のみで扱う。語リスト（rule 側）に追加した語の
+// 単位近接判定を効かせるには、この分類（detect 側）も併せて更新すること。
 func isCurrencyPrefix(kw string) bool {
 	switch kw {
 	case "¥", "￥", "$":
