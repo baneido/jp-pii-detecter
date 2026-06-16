@@ -51,6 +51,9 @@ type Detector struct {
 	minConf rule.Confidence
 	// normStopwords は正規化済みの stopword（マッチ文字列は常に正規化済みのため）。
 	normStopwords []string
+	// ctxTokens は ASCII コンテキスト語をあらかじめ識別子トークン列に分割した
+	// キャッシュ（キーワードは静的なので行ごとに再分割しないため）。
+	ctxTokens map[string][]string
 }
 
 // New は設定に基づいて Detector を構築する。
@@ -73,7 +76,25 @@ func New(cfg *config.Config) (*Detector, error) {
 	for i, sw := range cfg.Allowlist.Stopwords {
 		normStopwords[i] = normalize.Line(sw)
 	}
-	return &Detector{rules: rules, cfg: cfg, minConf: minConf, normStopwords: normStopwords}, nil
+	// ASCII コンテキスト語のトークン分割はキーワードが静的なため一度だけ行う。
+	ctxTokens := map[string][]string{}
+	for _, r := range rules {
+		for _, kw := range r.Context {
+			if asciiOnly(kw) {
+				if _, ok := ctxTokens[kw]; !ok {
+					ctxTokens[kw] = tokenizeIdentifiers(kw)
+				}
+			}
+		}
+		for _, kw := range r.NegativeContext {
+			if asciiOnly(kw) {
+				if _, ok := ctxTokens[kw]; !ok {
+					ctxTokens[kw] = tokenizeIdentifiers(kw)
+				}
+			}
+		}
+	}
+	return &Detector{rules: rules, cfg: cfg, minConf: minConf, normStopwords: normStopwords, ctxTokens: ctxTokens}, nil
 }
 
 // Rules は有効なルール一覧を返す。
@@ -180,7 +201,7 @@ func (d *Detector) hasCrossLineNegativeContext(f Finding, lines []string, lineId
 	// 改行と空白は両方とも 1 バイトなのでオフセットは変わらない。
 	combined = strings.ReplaceAll(combined, "\n", " ")
 	var runes []rune
-	return hasNegativeContextNear(combined, offset+byteStart, offset+byteEnd, negativeContextWindowRunes, &runes, negCtx)
+	return d.hasNegativeContextNear(combined, offset+byteStart, offset+byteEnd, negativeContextWindowRunes, &runes, negCtx)
 }
 
 func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first, second string) []Finding {
@@ -254,7 +275,7 @@ func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 			if !ctxComputed {
 				// matchingContexts は内部で小文字化しつつ、トークナイザ用に
 				// 元の大文字小文字（camelCase 境界）を保った norm を受け取る。
-				ctxKeywords = matchingContexts(norm, r.Context)
+				ctxKeywords = d.matchingContexts(norm, r.Context)
 				ctxComputed = true
 			}
 			return ctxKeywords
@@ -263,13 +284,13 @@ func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 			if r.RequireContextWindow <= 0 {
 				return ctx()
 			}
-			return matchingContexts(contextWindow(norm, start, end, r.RequireContextWindow, &normRunes), r.Context)
+			return d.matchingContexts(contextWindow(norm, start, end, r.RequireContextWindow, &normRunes), r.Context)
 		}
 		hasNegativeNear := func(start, end int) bool {
 			if len(r.NegativeContext) == 0 {
 				return false
 			}
-			return hasNegativeContextNear(norm, start, end, negativeContextWindowRunes, &normRunes, r.NegativeContext)
+			return d.hasNegativeContextNear(norm, start, end, negativeContextWindowRunes, &normRunes, r.NegativeContext)
 		}
 		for _, p := range r.Patterns {
 			if p.RequireContext && r.RequireContextWindow <= 0 && len(ctx()) == 0 {
@@ -364,11 +385,11 @@ func ignoredLine(line string) bool {
 	return strings.Contains(line, IgnoreMarker) || strings.Contains(line, AllowMarker)
 }
 
-func containsAnyContext(haystack string, kws []string) bool {
-	return len(matchingContexts(haystack, kws)) > 0
+func (d *Detector) containsAnyContext(haystack string, kws []string) bool {
+	return len(d.matchingContexts(haystack, kws)) > 0
 }
 
-func hasNegativeContextNear(s string, start, end, radius int, runes *[]rune, kws []string) bool {
+func (d *Detector) hasNegativeContextNear(s string, start, end, radius int, runes *[]rune, kws []string) bool {
 	if *runes == nil {
 		*runes = []rune(s)
 	}
@@ -398,7 +419,7 @@ func hasNegativeContextNear(s string, start, end, radius int, runes *[]rune, kws
 	if len(generic) == 0 {
 		return false
 	}
-	return containsAnyContext(contextWindow(s, start, end, radius, runes), generic)
+	return d.containsAnyContext(contextWindow(s, start, end, radius, runes), generic)
 }
 
 func isCurrencyPrefix(kw string) bool {
@@ -479,7 +500,7 @@ func isJapaneseLetter(r rune) bool {
 	return (r >= 0x3040 && r <= 0x30ff) || (r >= 0x3400 && r <= 0x9fff)
 }
 
-func matchingContexts(haystack string, kws []string) []string {
+func (d *Detector) matchingContexts(haystack string, kws []string) []string {
 	lower := strings.ToLower(haystack)
 	// 識別子トークンは ASCII キーワードが単語境界で見つからなかった
 	// 場合のみ必要になるため、最初に要求されるまで分割を遅延する。
@@ -497,12 +518,17 @@ func matchingContexts(haystack string, kws []string) []string {
 		if !asciiOnly(kw) {
 			continue
 		}
+		// キーワード側のトークンは New で事前計算済み。未登録の場合のみ分割する。
+		kwTokens, ok := d.ctxTokens[kw]
+		if !ok {
+			kwTokens = tokenizeIdentifiers(kw)
+		}
 		if !tokenized {
 			// camelCase の境界を保つため小文字化前の元文字列を分割する。
 			tokens = tokenizeIdentifiers(haystack)
 			tokenized = true
 		}
-		if containsTokenSubsequence(tokens, kw) {
+		if containsTokenSubsequence(tokens, kwTokens) {
 			out = append(out, kw)
 		}
 	}
@@ -567,10 +593,9 @@ func tokenizeIdentifiers(s string) []string {
 	return tokens
 }
 
-// containsTokenSubsequence は kw を分割したトークン列が tokens の中に
-// 連続部分列として現れるかを返す。kw は小文字で定義されている前提。
-func containsTokenSubsequence(tokens []string, kw string) bool {
-	kwTokens := tokenizeIdentifiers(kw)
+// containsTokenSubsequence は kwTokens（キーワードを分割したトークン列）が
+// tokens の中に連続部分列として現れるかを返す。
+func containsTokenSubsequence(tokens, kwTokens []string) bool {
 	if len(kwTokens) == 0 || len(kwTokens) > len(tokens) {
 		return false
 	}
