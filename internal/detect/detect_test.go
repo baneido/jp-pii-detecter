@@ -421,19 +421,45 @@ func TestPersonNamePlaceholderRejected(t *testing.T) {
 
 func TestPersonNameNonPersonKeysExcluded(t *testing.T) {
 	d := newDetector(t, `min_confidence = "low"`)
-	// 末尾が name の非人物 ASCII キーは前方境界で除外する。
-	// 会社名・品名・件名は日本語の非人物キーで、単一ラベル 名 の前方境界で除外する。
+	// 末尾が name の非人物 ASCII キーは前方境界で除外する。snake_case だけでなく
+	// kebab-case（project-name）・dotted key（project.name）も裸の name ラベルの
+	// 前方境界で除外する。会社名・品名・件名は日本語の非人物キーで、単一ラベル 名
+	// の前方境界で除外する。
 	for _, line := range []string{
 		"project_name: 山田太郎",
 		"company_name: 田中花子",
 		"service_name: 鈴木システム",
 		"package_name: 佐藤モジュール",
+		"project-name: 山田太郎",
+		"company-name: 田中花子",
+		"service-name: 鈴木一郎",
+		"project.name: 佐藤花子",
+		"app.name: 高橋健太",
 		"会社名: 山田商事株式会社",
 		"品名: りんご",
 		"件名: 重要なお知らせ",
 	} {
 		t.Run(line, func(t *testing.T) {
 			assertRules(t, d.ScanLine("f.txt", 1, line))
+		})
+	}
+}
+
+func TestPersonNameBareNameLabelDetected(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	// 裸の name ラベルは行頭・引用符・区切り直後など、識別子の一部でない
+	// 位置でのみ人名として検出する（kebab/dotted の除外と両立させる回帰ガード）。
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"行頭 name", "name: 田中太郎", []string{"person-name"}},
+		{"JSON 風 name キー", `{"name": "佐藤花子"}`, []string{"person-name"}},
+		{"カンマ直後 name", "id,name: 鈴木一郎", []string{"person-name"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
 		})
 	}
 }

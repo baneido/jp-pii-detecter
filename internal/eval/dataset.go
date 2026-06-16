@@ -149,8 +149,12 @@ var Dataset = []Case{
 	{"名: 一覧", nil, nil},         // 弱いラベル + 一般名詞（辞書で棄却）
 	{"姓: 不明", nil, nil},         // 弱いラベル + プレースホルダ
 	// 陰性: 末尾が name の非人物キー（前方境界で除外）。
+	// snake_case だけでなく kebab-case・dotted key も除外する。
 	{"project_name: 山田太郎", nil, nil},
 	{"company_name: 田中花子", nil, nil},
+	{"project-name: 山田太郎", nil, nil},
+	{"company-name: 田中花子", nil, nil},
+	{"project.name: 佐藤花子", nil, nil},
 	{"会社名: 山田商事株式会社", nil, nil},
 	// 再現率の限界: ラテン文字の氏名は静的パターンの対象外（未検出）。
 	{`full_name: "Tanaka Taro"`, []string{"person-name"}, nil},

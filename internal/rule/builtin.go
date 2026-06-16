@@ -52,11 +52,17 @@ var (
 	// 氏名漢字 / 氏名カナ / お名前カナ 等は末尾サフィックスで吸収する。
 	personNameLabelJP = `(?:氏名|お名前|ご氏名|名前|姓名|フリガナ|ふりがな|フルネーム|` +
 		`患者名|契約者名|利用者名|顧客名|会員名|申込者名|請求先名|受取人|担当者名)(?:漢字|カナ|かな)?`
-	// personNameLabelASCII は明確に人物を指す ASCII キー。前方境界
-	// `[^0-9A-Za-z_]` と併用し、company_name / project_name など末尾が
-	// name の非人物キーを除外する（_ や英字の直後では name が始まらない）。
+	// personNameLabelASCII は明確に人物を指す複合 ASCII キー（語そのものが
+	// 人物を表す）。前方境界 `[^0-9A-Za-z_]` と併用する。接頭辞付き
+	// （foo-customer_name 等）でも語が人名フィールドであることは変わらないため
+	// ここでは厳しめの境界は不要。裸の name は別途扱う（personNameBareNameBoundary 参照）。
 	personNameLabelASCII = `(?:full_?name|customer_?name|user_?name|applicant_?name|` +
-		`patient_?name|account_?name|contact_?name|name)`
+		`patient_?name|account_?name|contact_?name)`
+	// personNameBareNameBoundary は裸の name ラベル専用の前方境界。
+	// 識別子連結文字（英数字・_）に加えて kebab-case の `-` と dotted key の
+	// `.` も禁止し、project-name / company-name / project.name など末尾が name の
+	// 非人物キーを person-name として誤検出しないようにする。
+	personNameBareNameBoundary = `(?:^|[^-.0-9A-Za-z_])`
 	// personNameSep はラベルと値の区切り。キー側の閉じ引用符（"name":）と
 	// 値側の開き引用符・括弧（: "山田" / ：「山田」）の両方を許容する。
 	personNameSep = `["']?\s*[:=]\s*["'「『（(]?\s*`
@@ -291,15 +297,23 @@ func Builtin() []Rule {
 			// 前方境界で除外する（下記パターンのコメント参照）。
 			Validate: notPlaceholderName,
 			Patterns: []Pattern{
-				// 強いラベル: 氏名系の日本語ラベルと、明確に人物を指す
-				// ASCII キー（full_name / customer_name / name 等）。値が
-				// 人名らしいかは問わず（収録外の人名も拾うため）、辞書照合は
-				// しない。前方境界 `[^0-9A-Za-z_]` により company_name /
-				// project_name など末尾が name の非人物キーを除外する。
-				// JSON/YAML のキー引用符（"name":）と値の引用符・括弧にも対応。
+				// 強いラベル: 氏名系の日本語ラベルと、語そのものが人物を表す
+				// 複合 ASCII キー（full_name / customer_name 等）。値が人名らしいかは
+				// 問わず（収録外の人名も拾うため）、辞書照合はしない。前方境界
+				// `[^0-9A-Za-z_]` を併用する。JSON/YAML のキー引用符（"氏名":）と
+				// 値の引用符・括弧にも対応。
 				{Re: regexp.MustCompile(
 					`(?:^|[^0-9A-Za-z_])` +
 						`(?:` + personNameLabelJP + `|` + personNameLabelASCII + `)` +
+						personNameSep +
+						`(` + personNameValue + `)`,
+				), Base: Low},
+				// 裸の name ラベル。kebab-case / dotted key（project-name /
+				// company-name / project.name 等）の末尾 name を人名として
+				// 誤検出しないよう、前方境界で `-` `.` も禁止する。
+				{Re: regexp.MustCompile(
+					personNameBareNameBoundary +
+						`name` +
 						personNameSep +
 						`(` + personNameValue + `)`,
 				), Base: Low},
