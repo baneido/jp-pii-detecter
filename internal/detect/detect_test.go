@@ -360,6 +360,107 @@ high_recall = true
 	assertRules(t, d.ScanLine("f.txt", 1, "担当: 山田太郎"), "person-name-high-recall")
 }
 
+func TestPersonNameLabeledExpansion(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"お名前 全角コロン", "お名前：鈴木花子", []string{"person-name"}},
+		{"患者名", "患者名: 佐藤 一郎", []string{"person-name"}},
+		{"顧客名", "顧客名: 田中花子", []string{"person-name"}},
+		{"担当者名", "担当者名: 伊藤 美咲", []string{"person-name"}},
+		{"氏名カナ サフィックス", "氏名カナ: ヤマダ タロウ", []string{"person-name"}},
+		{"ASCII customer_name", "customer_name: 佐藤花子", []string{"person-name"}},
+		{"ASCII full_name 日本語値", "full_name: 山田太郎", []string{"person-name"}},
+		{"JSON 風キー引用符", `{"customer_name": "佐藤花子"}`, []string{"person-name"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+func TestPersonNameWeakFieldsDictGated(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		// 姓名辞書に載る値は検出する。
+		{"姓", "姓: 高橋", []string{"person-name"}},
+		{"名", "名: 健太", []string{"person-name"}},
+		{"last_name", "last_name: 山田", []string{"person-name"}},
+		{"first_name", "first_name: 花子", []string{"person-name"}},
+		// 辞書に載らない一般名詞は弱いラベルでは棄却する。
+		{"名 + 一般名詞", "名: 一覧", nil},
+		{"last_name + 一般名詞", "last_name: 合計", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+func TestPersonNamePlaceholderRejected(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	for _, line := range []string{
+		"氏名: 未定",
+		"氏名: 該当なし",
+		"お名前: 非公開",
+		"担当者名: テストユーザー",
+		"customer_name: サンプル太郎",
+	} {
+		t.Run(line, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, line))
+		})
+	}
+}
+
+func TestPersonNameNonPersonKeysExcluded(t *testing.T) {
+	d := newDetector(t, `min_confidence = "low"`)
+	// 末尾が name の非人物 ASCII キーは前方境界で除外する。
+	// 会社名・品名・件名は日本語の非人物キーで、単一ラベル 名 の前方境界で除外する。
+	for _, line := range []string{
+		"project_name: 山田太郎",
+		"company_name: 田中花子",
+		"service_name: 鈴木システム",
+		"package_name: 佐藤モジュール",
+		"会社名: 山田商事株式会社",
+		"品名: りんご",
+		"件名: 重要なお知らせ",
+	} {
+		t.Run(line, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, line))
+		})
+	}
+}
+
+func TestPersonNameHighRecallDictGated(t *testing.T) {
+	d := newDetector(t, `
+[rules]
+high_recall = true
+`)
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		// 姓名辞書に載る人名は敬称・担当ラベルで検出する。
+		{"敬称 + 姓", "山田様より連絡あり", []string{"person-name-high-recall"}},
+		{"担当 + 姓名", "担当: 山田太郎", []string{"person-name-high-recall"}},
+		// 組織名 + 敬称・部署名は姓名辞書で棄却する。
+		{"組織 + 敬称", "田中商事様より連絡あり", nil},
+		{"部署 + 担当", "担当: 営業部", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
 func TestAllowlist(t *testing.T) {
 	d := newDetector(t, `
 [allowlist]

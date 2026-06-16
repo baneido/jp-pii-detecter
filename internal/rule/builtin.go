@@ -45,6 +45,55 @@ const (
 	digitRuleRequireContextWindow = 40
 )
 
+// 氏名ルールで共用する部分パターン。正規化済みの行を前提とする
+// （全角コロン `：`・全角イコール `＝`・全角スペースは正規化で半角になる）。
+var (
+	// personNameLabelJP は値の前に来る氏名系の日本語ラベル。
+	// 氏名漢字 / 氏名カナ / お名前カナ 等は末尾サフィックスで吸収する。
+	personNameLabelJP = `(?:氏名|お名前|ご氏名|名前|姓名|フリガナ|ふりがな|フルネーム|` +
+		`患者名|契約者名|利用者名|顧客名|会員名|申込者名|請求先名|受取人|担当者名)(?:漢字|カナ|かな)?`
+	// personNameLabelASCII は明確に人物を指す ASCII キー。前方境界
+	// `[^0-9A-Za-z_]` と併用し、company_name / project_name など末尾が
+	// name の非人物キーを除外する（_ や英字の直後では name が始まらない）。
+	personNameLabelASCII = `(?:full_?name|customer_?name|user_?name|applicant_?name|` +
+		`patient_?name|account_?name|contact_?name|name)`
+	// personNameSep はラベルと値の区切り。キー側の閉じ引用符（"name":）と
+	// 値側の開き引用符・括弧（: "山田" / ：「山田」）の両方を許容する。
+	personNameSep = `["']?\s*[:=]\s*["'「『（(]?\s*`
+	// personNameValue は氏名の値（漢字・かな・カナ列。任意で半角スペース
+	// 区切りの 2 語）。強いラベル用に 2 文字以上を要求する。
+	personNameValue = `[` + kanji + hiragana + katakana + `]{2,12}` +
+		`(?:[ ][` + kanji + hiragana + katakana + `]{1,12})?`
+	// personNameValueShort は弱いラベル（姓・名の単一フィールド）用。
+	// 1 文字姓・名（林・愛 等）も拾えるよう下限を 1 文字にする。誤検出は
+	// パターンの姓名辞書照合（dict.IsPersonName）で抑える。
+	personNameValueShort = `[` + kanji + hiragana + katakana + `]{1,12}` +
+		`(?:[ ][` + kanji + hiragana + katakana + `]{1,12})?`
+)
+
+// personNamePlaceholders は氏名の値として現れるダミー語（人名ではない）。
+var personNamePlaceholders = map[string]bool{
+	"未定": true, "不明": true, "該当なし": true, "該当無し": true,
+	"なし": true, "無し": true, "非公開": true, "匿名": true,
+	"名無し": true, "未設定": true, "未記入": true, "記入例": true, "空欄": true,
+}
+
+// notPlaceholderName は氏名候補 v がプレースホルダ（未定・テスト等）でない
+// ことを返す。氏名ルールの Validate に使い、ラベルはあるが値がダミーの行
+// （氏名: 未定 など）を棄却する。
+func notPlaceholderName(v string) bool {
+	v = strings.TrimSpace(v)
+	if personNamePlaceholders[v] {
+		return false
+	}
+	for _, s := range []string{"テスト", "サンプル", "ダミー"} {
+		if strings.Contains(v, s) {
+			return false
+		}
+	}
+	return true
+}
+
 // digitRuleNegativeContext は桁ベースのルールを棄却する近傍語
 // （金額・数量・連番 ID など PII でない数字列の文脈）。
 //
@@ -237,26 +286,59 @@ func Builtin() []Rule {
 			ID:          "person-name",
 			Description: "氏名（ラベル付き）",
 			Prefilter:   PrefilterCJK,
+			// プレースホルダ（未定・該当なし・テスト等）の値はすべての
+			// パターンで棄却する。非人物キー（project_name 等）はラベルの
+			// 前方境界で除外する（下記パターンのコメント参照）。
+			Validate: notPlaceholderName,
 			Patterns: []Pattern{
+				// 強いラベル: 氏名系の日本語ラベルと、明確に人物を指す
+				// ASCII キー（full_name / customer_name / name 等）。値が
+				// 人名らしいかは問わず（収録外の人名も拾うため）、辞書照合は
+				// しない。前方境界 `[^0-9A-Za-z_]` により company_name /
+				// project_name など末尾が name の非人物キーを除外する。
+				// JSON/YAML のキー引用符（"name":）と値の引用符・括弧にも対応。
 				{Re: regexp.MustCompile(
-					`(?:氏名|名前|姓名|フリガナ|ふりがな)\s*[:=]\s*` +
-						`([` + kanji + hiragana + katakana + `]{2,12}(?:[ ][` + kanji + hiragana + katakana + `]{1,12})?)`,
+					`(?:^|[^0-9A-Za-z_])` +
+						`(?:` + personNameLabelJP + `|` + personNameLabelASCII + `)` +
+						personNameSep +
+						`(` + personNameValue + `)`,
 				), Base: Low},
+				// 弱いラベル（姓・名・last_name 等の単一フィールド）は誤検出
+				// しやすいため、姓名辞書で人名らしさを検証して棄却を絞る。
+				// 日本語ラベル `姓`/`名` は前後を漢字・かなで挟まれた語
+				// （氏名・会社名・品名 等）を拾わないよう、前方境界を厳しめにする。
+				{Re: regexp.MustCompile(
+					`(?:^|[^` + kanji + hiragana + katakana + `0-9A-Za-z_])` +
+						`(?:姓|名|名字|苗字|セイ|メイ)` +
+						personNameSep +
+						`(` + personNameValueShort + `)`,
+				), Base: Low, Validate: dict.IsPersonName},
+				{Re: regexp.MustCompile(
+					`(?:^|[^0-9A-Za-z_])` +
+						`(?:last_?name|first_?name)` +
+						personNameSep +
+						`(` + personNameValueShort + `)`,
+				), Base: Low, Validate: dict.IsPersonName},
 			},
 		},
 		{
 			ID:          "person-name-high-recall",
 			Description: "氏名（敬称・担当者アンカー付き・高再現率）",
 			Prefilter:   PrefilterCJK,
+			Validate:    notPlaceholderName,
 			Patterns: []Pattern{
+				// 担当者・宛名・連絡先ラベル。組織名・部署名（田中商事 等）の
+				// 誤検出を姓名辞書で抑える。
 				{Re: regexp.MustCompile(
-					`(?:担当|担当者|宛名|連絡先)\s*[:=]\s*` +
+					`(?:担当|担当者|宛名|連絡先)` + personNameSep +
 						`([` + kanji + `]{2,8}(?:[ ][` + kanji + `]{1,8})?)`,
-				), Base: Medium},
+				), Base: Medium, Validate: dict.IsPersonName},
+				// 敬称アンカー（様/さん/氏/殿）。組織名 + 様（田中商事様 等）を
+				// 拾わないよう姓名辞書で検証する。
 				{Re: regexp.MustCompile(
 					`(?:^|[^` + kanji + hiragana + katakana + `])` +
 						`([` + kanji + `]{2,8})(?:様|さん|氏|殿)`,
-				), Base: Medium},
+				), Base: Medium, Validate: dict.IsPersonName},
 			},
 		},
 		{

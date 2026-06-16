@@ -299,6 +299,12 @@ func (d *Detector) ScanLine(file string, lineNo int, line string) []Finding {
 					}
 					reason.Validated = true
 				}
+				if p.Validate != nil {
+					if !p.Validate(entity) {
+						continue
+					}
+					reason.Validated = true
+				}
 				if d.allowlisted(entity) {
 					continue
 				}

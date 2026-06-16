@@ -51,6 +51,11 @@ type Pattern struct {
 	// RequireContext が true の場合、コンテキストキーワードが
 	// 同一行に存在しなければ検出を破棄する。
 	RequireContext bool
+	// Validate はこのパターン固有の追加検証（nil なら検証なし）。
+	// ルール全体の Rule.Validate に加えて適用され、パターンごとに
+	// 異なる検証（例: 氏名の弱いラベルだけ姓名辞書で照合する）を
+	// 行うために使う。引数は正規化済みのマッチ文字列。
+	Validate func(match string) bool
 }
 
 // Prefilter は行単位の事前判定。正規化済みの行に必要な文字種が
