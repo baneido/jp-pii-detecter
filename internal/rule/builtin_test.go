@@ -8,8 +8,8 @@ import "testing"
 // internal/eval/dataset.go の既存ケースから採っており、新しい仕様は
 // 発明していない。ルール本体をいじる前のリグレッション検知を目的とする。
 
-// validPhone は正規化済みのマッチ文字列を受け取り、桁数・先頭桁・国番号
-// （+81）規則を満たす電話番号だけを有効とする。
+// validPhone はマッチ文字列を受け取り、区切り文字（- / 半角スペース）や先頭の "+" を除去した上で、
+// 桁数・先頭桁・国番号（+81）規則を満たす電話番号だけを有効とする。
 func TestValidPhone(t *testing.T) {
 	tests := []struct {
 		name string
