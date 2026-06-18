@@ -2,22 +2,23 @@
 
 ![PII detection F1](https://img.shields.io/badge/PII検出_F1（評価データセット）-0.98-brightgreen)
 
-日本特化の個人情報（PII）静的検出器。リポジトリに混入したマイナンバー・電話番号・住所などを
+日本特化の個人情報（PII）静的検出器。リポジトリに混入したマイナンバーや電話番号、住所などを
 コミット前（git hook）や CI/CD（GitHub Actions）で検出します。
 
-- **日本特化**: マイナンバー検査用数字の検証、全角・長音記号の正規化、和暦、JCB カードなどに対応
+- **日本特化**: マイナンバー検査用数字の検証、全角や長音記号の正規化、和暦、JCB カードなどに対応
 - **高速**: Go 製シングルバイナリ（利用時に Go は不要）。pre-commit ではステージ済み差分の追加行のみを走査
-- **CI フレンドリー**: 終了コード・JSON・SARIF・GitHub Actions アノテーション出力
+- **CI フレンドリー**: 終了コード、JSON、SARIF、GitHub Actions アノテーション出力
 - **二次漏えい防止**: 検出値は既定でマスク表示
 
 ## 対応している個人情報
 
-精度の凡例 — **◎** 単体で高精度（チェックディジット等で誤検出が少ない） /
+精度の凡例：**◎** 単体で高精度（チェックディジット等で誤検出が少ない） /
 **○** 周辺の語（「TEL」「住所」など）と併用して実用的な精度 /
 **△** ラベル付き（`氏名:` など）に限定して検出
 
-「実測 F1」は同梱のラベル付き評価データセット（[internal/eval/dataset.go](internal/eval/dataset.go)）に対する
-**F1 スコア**（適合率と再現率の調和平均）です。`go test ./internal/eval` で検証しており
+「実測 F1」はラベル付き評価データセット（実在しうる PII を含むためリポジトリ外で管理。取得は
+[docs/development.md](docs/development.md)）に対する
+**F1 スコア**（適合率と再現率の調和平均）です。`JP_PII_FIXTURES` を設定して `go test ./internal/eval` で検証しており
 （数値が動くと CI が落ちる）、内訳は [docs/accuracy.md](docs/accuracy.md) を参照してください。
 評価データセットに対する値であり、あらゆる入力での精度を保証するものではありません。
 
@@ -26,7 +27,7 @@
 | マイナンバー（個人番号） | `1234-5678-9018` | ◎ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 12 桁 + 検査用数字（総務省令のアルゴリズム） |
 | クレジットカード番号 | `4111-1111-1111-1111` | ◎ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | Luhn + ブランド判定（Visa/Master/JCB/Amex 等） |
 | メールアドレス | `taro@example.jp` | ◎ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | パターン + IANA TLD 実在チェック + 予約ドメイン除外 |
-| 電話番号 | `090-1234-5678` | ◎ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 携帯/IP/固定/+81 + 桁数検証 |
+| 電話番号 | `090-XXXX-XXXX` | ◎ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 携帯/IP/固定/+81 + 桁数検証 |
 | 郵便番号 | `〒150-0043` | ◎ / ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 上位3桁の実在チェック。〒マーク付きは単独、なしは周辺の語が必要 |
 | 住所 | `東京都渋谷区道玄坂2-10-7` | ○ | ![F1 0.89](https://img.shields.io/badge/F1-0.89-green) | 都道府県〜番地のパターン |
 | 運転免許証番号 | `免許証番号: 305012345678` | ○ | ![F1 1.00](https://img.shields.io/badge/F1-1.00-brightgreen) | 12 桁 + 周辺の語が必要 |
@@ -44,35 +45,31 @@
 > 検出の前提になっているルールでは昇格は起きず、ルール固有の信頼度
 > （表の △ は `medium`、○ は `high`）で報告されます。
 
-検出できる PII の種類と手法の詳細・設計判断は
+検出できる PII の種類、手法の詳細、設計判断は
 [docs/detection-methods.md](docs/detection-methods.md) を参照してください。
 
 ## インストール
 
-macOS / Linux / GitHub Actions の bash 環境では、GitHub Releases のビルド済みバイナリを取得します
-（Go のインストールは不要です）。installer と取得するバイナリは同じタグに固定してください。
+### Option 1. バイナリをインストール
 
-```console
-$ curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.1.0/scripts/install.sh | JP_PII_DETECT_VERSION=v0.1.0 sh
+GitHub Releases のビルド済みバイナリを取得してインストールするには以下のコマンドを実行します。
+インストール先は既定で `$HOME/.local/bin` です。変更する場合は `JP_PII_DETECT_INSTALL_DIR=/path/to/bin` を指定してください。
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detector/v0.1.8/scripts/install.sh | JP_PII_DETECT_VERSION=v0.1.8 sh
 ```
 
-`v0.1.0` は利用したいリリースタグに置き換えてください。installer は Release asset と
-`checksums.txt` を取得し、SHA-256 を検証してから展開します。
+### Option 2. Go install
 
-インストール先は既定で `$HOME/.local/bin` です。変更する場合は
-`JP_PII_DETECT_INSTALL_DIR=/path/to/bin` を指定してください。
-installer は `sh`、`tar`、`curl` または `wget`、`sha256sum` または `shasum` を使います。
-Windows では Git Bash / MSYS2 などの POSIX shell 環境から実行してください。
-
-Go が入っている開発環境では従来どおり `go install` も使えます。
-
-```console
-$ go install github.com/baneido/jp-pii-detector/cmd/jp-pii-detect@latest
+```sh
+ go install github.com/baneido/jp-pii-detector/cmd/jp-pii-detect@latest
 ```
 
 ## 使い方
 
-```console
+### 1. CLI として利用
+
+```sh
 $ jp-pii-detect scan .                        # カレントディレクトリ以下をフルスキャン
 $ jp-pii-detect scan --staged                 # ステージ済み変更の追加行のみ（pre-commit 用）
 $ jp-pii-detect scan --diff origin/main...HEAD  # PR の追加行のみ（CI 用）
@@ -83,23 +80,21 @@ $ jp-pii-detect rules                         # 検出ルール一覧
 出力例（検出値はマスクされます）:
 
 ```
-users.csv:4:6   [high]  jp-phone-number 電話番号（携帯・固定・IP・国際表記）  09*********78
+users.csv:4:6   [high]  jp-phone-number 電話番号（携帯・固定・IP・国際表記）  09*********XX
 ```
-
-終了コード: `0` = 検出なし / `1` = 検出あり / `2` = エラー
 
 ローカルで実際の値を確認したい場合は `--unmask` を付けます（CI では使わないでください）。
 
-## git commit hook での利用
+### 2. git commit hook での利用
 
-### pre-commit フレームワーク
+#### pre-commit フレームワーク
 
 `.pre-commit-config.yaml`:
 
 ```yaml
 repos:
   - repo: https://github.com/baneido/jp-pii-detector
-    rev: v0.1.0
+    rev: v0.1.8
     hooks:
       - id: jp-pii-detect
 ```
@@ -109,7 +104,7 @@ repos:
 タグと同じバージョンのバイナリを使います。`latest` を指定した場合は、古いキャッシュを
 使い続けないよう毎回 Release asset を取得し直します。
 
-### 素の git hook
+#### git hook
 
 `.git/hooks/pre-commit`:
 
@@ -118,7 +113,7 @@ repos:
 exec jp-pii-detect scan --staged
 ```
 
-## GitHub Actions での利用
+### 3. GitHub Actions
 
 ```yaml
 name: pii-check
@@ -136,9 +131,6 @@ jobs:
           args: scan --diff origin/${{ github.base_ref }}...HEAD --format github
 ```
 
-この Action は GitHub Releases のビルド済みバイナリを取得して実行するため、
-利用側の workflow で `actions/setup-go` を追加する必要はありません。
-
 `--format github` を指定すると、検出箇所が PR の該当行にアノテーション表示されます。
 `--format sarif` の出力は GitHub Code Scanning に取り込めます。
 
@@ -149,7 +141,7 @@ jobs:
 ルートの設定が使われます（`--config` で明示指定も可能）。
 
 ```toml
-# 報告する最小信頼度: low | medium | high（既定: medium）
+# 報告する最小信頼度: low | medium | high（デフォルト: medium）
 min_confidence = "medium"
 
 [rules]
@@ -159,27 +151,27 @@ disabled = ["person-name"]
 high_recall = false
 
 [allowlist]
-# 走査から除外するパス（正規表現）。フルスキャンでは走査時のパス表記に加えて
+# スキャン対象から除外するパス（正規表現）。フルスキャンでは走査時のパス表記に加えて
 # リポジトリルートからの相対パスにも適用されるため、サブディレクトリから
 # 実行しても ^testdata/ のようなルート相対の指定が機能します。
 paths = ["^testdata/", "\\.lock$"]
 # マッチ文字列に対する除外（正規表現）。例: 自社ドメインのメール
 regexes = ["@baneido\\.com$"]
 # 完全一致で除外するダミー値
-stopwords = ["090-0000-0000"]
+stopwords = ["090-XXXX-XXXX"]
 ```
 
 意図的なダミー値には行内コメントで ignore マーカーを付けられます:
 
 ```python
-TEST_PHONE = "090-1234-5678"  # jp-pii-detector:ignore テスト用ダミー
+TEST_PHONE = "090-XXXX-XXXX"  # jp-pii-detector:ignore テスト用ダミー
 ```
 
 旧マーカー `pii-allow` も互換性のため引き続き利用できます。
 
 ## ドキュメント
 
-- [検出手法の調査と整理](docs/detection-methods.md) — 検出できる PII の種類・精度の根拠・
-  チェックディジットや正規化の仕組み・対象外とした項目とその理由
-- [検出精度（実測値）](docs/accuracy.md) — 評価データセットに対するルール別の適合率・再現率・F1
-- [開発者向けガイド](docs/development.md) — ビルド・テスト・内部構成・検出ルールの追加方法
+- [検出手法の調査と整理](docs/detection-methods.md)：検出できる PII の種類、精度の根拠、
+  チェックディジットや正規化の仕組み、対象外とした項目とその理由
+- [検出精度（実測値）](docs/accuracy.md)：評価データセットに対するルール別の適合率、再現率、F1
+- [開発者向けガイド](docs/development.md)：ビルド、テスト、内部構成、検出ルールの追加方法

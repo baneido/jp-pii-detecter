@@ -4,25 +4,50 @@ on:
     branches: [main]
   pull_request:
 
-# GITHUB_TOKEN の権限を最小化する（リポジトリの読み取りのみ必要）
+# GITHUB_TOKEN は読み取りのみ。id-token は GCP Workload Identity Federation（OIDC）に必要。
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      # 評価データセット/テストフィクスチャのローカルパス。
+      # 取得できなければ eval 系・PII フィクスチャ依存テストは t.Skip される。
+      JP_PII_FIXTURES: ${{ runner.temp }}/pii-fixtures.json
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
+
+      # 実在しうる PII を含む評価データセット/フィクスチャを GCS から取得する。
+      # リポジトリ変数（vars.JP_PII_FIXTURES_PROVIDER ほか）が設定されたときだけ実行し、
+      # 未設定（fork からの PR など）では取得せず、依存テストを Skip させる。
+      # TODO: google-github-actions/* もコミット SHA でピン留めする（他の action と同様）。
+      - name: Authenticate to Google Cloud (OIDC / Workload Identity)
+        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.JP_PII_FIXTURES_PROVIDER }}
+          service_account: ${{ vars.JP_PII_FIXTURES_SA }}
+      - name: Set up gcloud
+        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
+        uses: google-github-actions/setup-gcloud@v2
+      - name: Download PII fixtures from GCS
+        if: ${{ vars.JP_PII_FIXTURES_PROVIDER != '' }}
+        run: gcloud storage cp "gs://${{ vars.JP_PII_FIXTURES_BUCKET }}/pii-fixtures.json" "$JP_PII_FIXTURES"
+
       - run: go vet ./...
       # -race: 並列スキャン（internal/source）のデータ競合の回帰防止
       - run: go test -race ./...
       # docs/accuracy.md が実測値からドリフトしていないことを検証する
+      # （フィクスチャ未取得時は TestGenerateDoc が Skip され accuracy.md は不変＝ドリフトなし）
       - run: |
           go test ./internal/eval -run TestGenerateDoc -update
           git diff --exit-code docs/accuracy.md
       - run: go build ./cmd/jp-pii-detect
       # dogfooding: 自リポジトリを自分でスキャンして偽陽性ゼロを保証する
+      # （フィクスチャは $RUNNER_TEMP にあり作業ツリー外なので走査対象に入らない）
       - run: ./jp-pii-detect scan --format github .

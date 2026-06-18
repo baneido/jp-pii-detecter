@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/baneido/jp-pii-detector/internal/piifixtures"
 )
 
 var update = flag.Bool("update", false, "docs/accuracy.md を再生成する")
@@ -36,6 +38,7 @@ var wantF1 = map[string]float64{
 // TestAccuracy は実測 F1 が期待値と一致することを検証する（CI の回帰ガード）。
 // バッジに掲げた精度をコードと評価データセットで裏付ける。
 func TestAccuracy(t *testing.T) {
+	piifixtures.Require(t)
 	results, err := Evaluate()
 	if err != nil {
 		t.Fatal(err)
@@ -61,8 +64,9 @@ func TestAccuracy(t *testing.T) {
 }
 
 func TestEvaluateCasesKeepsRowMetricsForCasesWithoutSpans(t *testing.T) {
+	piifixtures.Require(t)
 	results, err := EvaluateCases([]Case{
-		{Line: "TEL: 090-1234-5678", Want: []string{"jp-phone-number"}},
+		{Line: "TEL: " + piifixtures.MustGet(t, "phone.mobile"), Want: []string{"jp-phone-number"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -79,9 +83,10 @@ func TestEvaluateCasesKeepsRowMetricsForCasesWithoutSpans(t *testing.T) {
 }
 
 func TestEvaluateCasesCountsExactAndRelaxedSpans(t *testing.T) {
+	piifixtures.Require(t)
 	results, err := EvaluateCases([]Case{
 		{
-			Line: "TEL: 090-1234-5678",
+			Line: "TEL: " + piifixtures.MustGet(t, "phone.mobile"),
 			Spans: []Span{{
 				RuleID: "jp-phone-number",
 				Start:  5,
@@ -90,7 +95,7 @@ func TestEvaluateCasesCountsExactAndRelaxedSpans(t *testing.T) {
 			}},
 		},
 		{
-			Line: "携帯 09012345678",
+			Line: "携帯 " + piifixtures.MustGet(t, "phone.mobile_nosep"),
 			Spans: []Span{{
 				RuleID: "jp-phone-number",
 				Start:  2, // intentionally includes the preceding space
@@ -118,9 +123,10 @@ func TestEvaluateCasesCountsExactAndRelaxedSpans(t *testing.T) {
 }
 
 func TestSpanMacroAveragesScoredRules(t *testing.T) {
+	piifixtures.Require(t)
 	results, err := EvaluateCases([]Case{
 		{
-			Line: "TEL: 090-1234-5678",
+			Line: "TEL: " + piifixtures.MustGet(t, "phone.mobile"),
 			Spans: []Span{{
 				RuleID: "jp-phone-number",
 				Start:  5,
@@ -128,7 +134,7 @@ func TestSpanMacroAveragesScoredRules(t *testing.T) {
 			}},
 		},
 		{
-			Line: "勤務地: 渋谷区道玄坂2-10-7",
+			Line: "勤務地: " + piifixtures.MustGet(t, "address.shibuya_ward"),
 			Spans: []Span{{
 				RuleID: "jp-address",
 				Start:  5,
@@ -164,6 +170,7 @@ func findResult(t *testing.T, results []Result, id string) Result {
 }
 
 func TestReport(t *testing.T) {
+	piifixtures.Require(t)
 	results, err := Evaluate()
 	if err != nil {
 		t.Fatal(err)
@@ -195,6 +202,7 @@ func TestGenerateDoc(t *testing.T) {
 	if !*update {
 		t.Skip("-update 指定時のみ docs/accuracy.md を再生成する")
 	}
+	piifixtures.Require(t)
 	results, err := Evaluate()
 	if err != nil {
 		t.Fatal(err)
@@ -209,11 +217,13 @@ func TestGenerateDoc(t *testing.T) {
 	var b strings.Builder
 	b.WriteString("# 検出精度（評価データセットに対する実測値）\n\n")
 	b.WriteString("`internal/eval` のラベル付き評価データセットに対して計測した、検出ルールごとの\n")
-	b.WriteString("適合率（precision）・再現率（recall）・F1 スコアです。`go test ./internal/eval` で\n")
-	b.WriteString("検証され（[eval_test.go](../internal/eval/eval_test.go)）、`-update` で本ファイルを再生成します。\n\n")
-	b.WriteString("> この数値は同梱の評価データセット（陽性・陰性の代表例と、実運用での限界を表す難ケース）に\n")
-	b.WriteString("> 対する値であり、あらゆる入力での精度を保証するものではありません。データセットは\n")
-	b.WriteString("> [internal/eval/dataset.go](../internal/eval/dataset.go) にあります。\n\n")
+	b.WriteString("適合率（precision）、再現率（recall）、F1 スコアです。`JP_PII_FIXTURES` を設定して\n")
+	b.WriteString("`go test ./internal/eval` で検証され（[eval_test.go](../internal/eval/eval_test.go)）、\n")
+	b.WriteString("`-update` で本ファイルを再生成します。\n\n")
+	b.WriteString("> この数値は、実在しうる PII を含むためリポジトリ外で管理する評価データセット\n")
+	b.WriteString("> （陽性と陰性の代表例と、実運用での限界を表す難ケース）に対する値であり、あらゆる\n")
+	b.WriteString("> 入力での精度を保証するものではありません。データセットの取得方法は\n")
+	b.WriteString("> [docs/development.md](../docs/development.md) を参照してください。\n\n")
 	b.WriteString("| ルール ID | F1 | 適合率 | 再現率 | TP | FP | FN |\n")
 	b.WriteString("|---|:--:|:--:|:--:|--:|--:|--:|\n")
 	for _, r := range results {

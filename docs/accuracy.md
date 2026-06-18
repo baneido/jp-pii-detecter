@@ -1,12 +1,14 @@
 # 検出精度（評価データセットに対する実測値）
 
 `internal/eval` のラベル付き評価データセットに対して計測した、検出ルールごとの
-適合率（precision）・再現率（recall）・F1 スコアです。`go test ./internal/eval` で
-検証され（[eval_test.go](../internal/eval/eval_test.go)）、`-update` で本ファイルを再生成します。
+適合率（precision）、再現率（recall）、F1 スコアです。`JP_PII_FIXTURES` を設定して
+`go test ./internal/eval` で検証され（[eval_test.go](../internal/eval/eval_test.go)）、
+`-update` で本ファイルを再生成します。
 
-> この数値は同梱の評価データセット（陽性・陰性の代表例と、実運用での限界を表す難ケース）に
-> 対する値であり、あらゆる入力での精度を保証するものではありません。データセットは
-> [internal/eval/dataset.go](../internal/eval/dataset.go) にあります。
+> この数値は、実在しうる PII を含むためリポジトリ外で管理する評価データセット
+> （陽性と陰性の代表例と、実運用での限界を表す難ケース）に対する値であり、あらゆる
+> 入力での精度を保証するものではありません。データセットの取得方法は
+> [docs/development.md](../docs/development.md) を参照してください。
 
 | ルール ID | F1 | 適合率 | 再現率 | TP | FP | FN |
 |---|:--:|:--:|:--:|--:|--:|--:|

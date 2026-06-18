@@ -8,6 +8,7 @@ import (
 
 	"github.com/baneido/jp-pii-detector/internal/config"
 	"github.com/baneido/jp-pii-detector/internal/detect"
+	"github.com/baneido/jp-pii-detector/internal/piifixtures"
 )
 
 func writeFile(t *testing.T, path string, data []byte) {
@@ -21,8 +22,9 @@ func writeFile(t *testing.T, path string, data []byte) {
 }
 
 func TestScanPaths(t *testing.T) {
+	piifixtures.Require(t)
 	tmp := t.TempDir()
-	phone := []byte("TEL: 090-1234-5678\n")
+	phone := []byte("TEL: " + piifixtures.MustGet(t, "source.phone_mobile_sep") + "\n")
 	writeFile(t, filepath.Join(tmp, "pii.txt"), phone)
 	writeFile(t, filepath.Join(tmp, "clean.txt"), []byte("no pii here\n"))
 	// NUL バイトを含むバイナリは走査しない。
@@ -65,8 +67,9 @@ func TestScanPaths(t *testing.T) {
 
 // allowlist.paths は検出結果に報告されるパスと同じ表記で照合される。
 func TestScanPathsAllowlistMatchesReportedPath(t *testing.T) {
+	piifixtures.Require(t)
 	tmp := t.TempDir()
-	phone := []byte("TEL: 090-1234-5678\n")
+	phone := []byte("TEL: " + piifixtures.MustGet(t, "source.phone_mobile_sep") + "\n")
 	writeFile(t, filepath.Join(tmp, "src", "testdata", "fixture.txt"), phone)
 	writeFile(t, filepath.Join(tmp, "src", "main.txt"), phone)
 
@@ -92,8 +95,9 @@ func TestScanPathsAllowlistMatchesReportedPath(t *testing.T) {
 // （^testdata/ 等）が機能すること。旧実装は走査時のパス表記
 // （../testdata/...）だけで照合していたためアンカーが効かなかった。
 func TestScanPathsAllowlistRepoRootRelative(t *testing.T) {
+	piifixtures.Require(t)
 	repo := t.TempDir()
-	phone := []byte("TEL: 090-1234-5678\n")
+	phone := []byte("TEL: " + piifixtures.MustGet(t, "source.phone_mobile_sep") + "\n")
 	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -121,9 +125,11 @@ func TestScanPathsAllowlistRepoRootRelative(t *testing.T) {
 // 複数ファイルの検出結果が walk 順（=決定的な順序）で返ること。
 // 並列化後の順序保証の回帰テスト。
 func TestScanPathsDeterministicOrder(t *testing.T) {
+	piifixtures.Require(t)
 	tmp := t.TempDir()
+	phone := []byte("TEL: " + piifixtures.MustGet(t, "source.phone_mobile_sep") + "\n")
 	for _, name := range []string{"a.txt", "b.txt", "c.txt", "d.txt"} {
-		writeFile(t, filepath.Join(tmp, name), []byte("TEL: 090-1234-5678\n"))
+		writeFile(t, filepath.Join(tmp, name), phone)
 	}
 	cfg := config.Default()
 	d, err := detect.New(cfg)
