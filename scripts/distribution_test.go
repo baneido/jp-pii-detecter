@@ -291,3 +291,119 @@ func TestReadmeDocumentsTagPinnedInstaller(t *testing.T) {
 		t.Fatalf("README should show a tag-pinned installer URL and matching binary version")
 	}
 }
+
+// homebrewTemplatePlaceholders はテンプレートとリリースワークフローの両方が
+// 参照するプレースホルダ。片方だけ変更すると formula が壊れるため一覧で固定する。
+var homebrewTemplatePlaceholders = []string{
+	"{{VERSION}}",
+	"{{TAG}}",
+	"{{SHA256_DARWIN_ARM64}}",
+	"{{SHA256_DARWIN_AMD64}}",
+	"{{SHA256_LINUX_ARM64}}",
+	"{{SHA256_LINUX_AMD64}}",
+}
+
+func renderHomebrewFormula(t *testing.T, tmpl, version, tag string) string {
+	t.Helper()
+	r := strings.NewReplacer(
+		"{{VERSION}}", version,
+		"{{TAG}}", tag,
+		"{{SHA256_DARWIN_ARM64}}", "1111111111111111111111111111111111111111111111111111111111111111",
+		"{{SHA256_DARWIN_AMD64}}", "2222222222222222222222222222222222222222222222222222222222222222",
+		"{{SHA256_LINUX_ARM64}}", "3333333333333333333333333333333333333333333333333333333333333333",
+		"{{SHA256_LINUX_AMD64}}", "4444444444444444444444444444444444444444444444444444444444444444",
+	)
+	return r.Replace(tmpl)
+}
+
+func TestHomebrewTemplateRendersPrebuiltBinaryFormula(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), "scripts", "jp-pii-detect.rb.tmpl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := string(data)
+
+	// テンプレート単体では全プレースホルダが存在しているべき。
+	for _, p := range homebrewTemplatePlaceholders {
+		if !strings.Contains(tmpl, p) {
+			t.Fatalf("formula template missing placeholder %s", p)
+		}
+	}
+
+	const tag = "v9.9.9"
+	rendered := renderHomebrewFormula(t, tmpl, strings.TrimPrefix(tag, "v"), tag)
+
+	// 埋めたあとはプレースホルダが残っていてはいけない。
+	if strings.Contains(rendered, "{{") {
+		t.Fatalf("rendered formula still contains a placeholder:\n%s", rendered)
+	}
+
+	wants := []string{
+		"class JpPiiDetect < Formula",
+		`version "9.9.9"`,
+		`bin.install "jp-pii-detect"`,
+		`shell_output("#{bin}/jp-pii-detect version")`,
+		"on_macos do",
+		"on_linux do",
+	}
+	for _, w := range wants {
+		if !strings.Contains(rendered, w) {
+			t.Fatalf("rendered formula missing %q:\n%s", w, rendered)
+		}
+	}
+
+	// プレースホルダ版ではなく、Go のリリースアセット 4 種を tag 付き URL で指す。
+	for _, asset := range []string{
+		"jp-pii-detect_darwin_arm64.tar.gz",
+		"jp-pii-detect_darwin_amd64.tar.gz",
+		"jp-pii-detect_linux_arm64.tar.gz",
+		"jp-pii-detect_linux_amd64.tar.gz",
+	} {
+		url := "https://github.com/baneido/jp-pii-detector/releases/download/" + tag + "/" + asset
+		if !strings.Contains(rendered, url) {
+			t.Fatalf("rendered formula missing asset URL %q:\n%s", url, rendered)
+		}
+	}
+
+	// ソースからビルドしない（Go 不要の方針）。
+	for _, forbidden := range []string{"depends_on", "go build", "go install"} {
+		if strings.Contains(rendered, forbidden) {
+			t.Fatalf("prebuilt-binary formula should not contain %q:\n%s", forbidden, rendered)
+		}
+	}
+}
+
+func TestReleaseWorkflowUpdatesHomebrewTap(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"needs: release",
+		"secrets.TAP_GITHUB_TOKEN",
+		"github.com/baneido/homebrew-tap.git",
+		"tap/Formula/jp-pii-detect.rb",
+		"scripts/jp-pii-detect.rb.tmpl",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("release workflow homebrew job missing %q", want)
+		}
+	}
+	// ワークフローはテンプレートと同じプレースホルダを sed で埋める。
+	for _, p := range homebrewTemplatePlaceholders {
+		if !strings.Contains(text, p) {
+			t.Fatalf("release workflow does not substitute placeholder %s", p)
+		}
+	}
+}
+
+func TestReadmeDocumentsHomebrewInstall(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "brew install baneido/tap/jp-pii-detect") {
+		t.Fatalf("README should document the Homebrew install command")
+	}
+}

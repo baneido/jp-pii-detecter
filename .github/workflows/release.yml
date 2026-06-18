@@ -72,3 +72,55 @@ jobs:
               --title "$GITHUB_REF_NAME" \
               --generate-notes
           fi
+
+  homebrew:
+    name: homebrew
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # 自リポジトリのテンプレート取得のみ。tap への push は TAP_TOKEN を使う
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # tap の push には TAP_TOKEN を使うため checkout の認証情報は残さない
+          persist-credentials: false
+      - name: Update baneido/homebrew-tap
+        env:
+          # baneido/homebrew-tap への push 権限を持つトークン（shipsafe と共用）。
+          # 未設定ならスキップする。
+          TAP_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -eu
+          if [ -z "${TAP_TOKEN:-}" ]; then
+            echo "::warning::TAP_GITHUB_TOKEN not set — skipping Homebrew formula update"
+            exit 0
+          fi
+          version="${TAG#v}"
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          curl -fsSL "${base}/checksums.txt" -o checksums.txt
+          sha() {
+            value=$(awk -v asset="$1" '$2 == asset {print $1}' checksums.txt)
+            [ -n "$value" ] || { echo "checksums.txt missing $1" >&2; exit 1; }
+            printf '%s' "$value"
+          }
+          darwin_arm64=$(sha jp-pii-detect_darwin_arm64.tar.gz)
+          darwin_amd64=$(sha jp-pii-detect_darwin_amd64.tar.gz)
+          linux_arm64=$(sha jp-pii-detect_linux_arm64.tar.gz)
+          linux_amd64=$(sha jp-pii-detect_linux_amd64.tar.gz)
+
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/baneido/homebrew-tap.git" tap
+          mkdir -p tap/Formula
+          sed -e "s|{{VERSION}}|${version}|g" \
+              -e "s|{{TAG}}|${TAG}|g" \
+              -e "s|{{SHA256_DARWIN_ARM64}}|${darwin_arm64}|g" \
+              -e "s|{{SHA256_DARWIN_AMD64}}|${darwin_amd64}|g" \
+              -e "s|{{SHA256_LINUX_ARM64}}|${linux_arm64}|g" \
+              -e "s|{{SHA256_LINUX_AMD64}}|${linux_amd64}|g" \
+              scripts/jp-pii-detect.rb.tmpl > tap/Formula/jp-pii-detect.rb
+          cd tap
+          git config user.name "jp-pii-detect-release-bot"
+          git config user.email "contact@baneido.com" # jp-pii-detector:ignore リリース bot の連絡先
+          git add Formula/jp-pii-detect.rb
+          git commit -m "jp-pii-detect ${version}" || echo "no changes"
+          git push
