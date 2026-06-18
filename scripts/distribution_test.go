@@ -3,6 +3,8 @@ package scripts_test
 import (
 	"archive/tar"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -44,8 +46,12 @@ func runScript(t *testing.T, script string, env []string, args ...string) (strin
 }
 
 func writeFakeReleaseArchive(t *testing.T, root string) string {
+	return writeFakeReleaseArchiveFor(t, root, testVersion, "#!/bin/sh\necho fake-jp-pii-detect \"$@\"\n")
+}
+
+func writeFakeReleaseArchiveFor(t *testing.T, root, version, body string) string {
 	t.Helper()
-	releaseDir := filepath.Join(root, testVersion)
+	releaseDir := filepath.Join(root, version)
 	if err := os.MkdirAll(releaseDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -54,13 +60,9 @@ func writeFakeReleaseArchive(t *testing.T, root string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
 	gz := gzip.NewWriter(f)
-	defer gz.Close()
 	tw := tar.NewWriter(gz)
-	defer tw.Close()
 
-	body := "#!/bin/sh\necho fake-jp-pii-detect \"$@\"\n"
 	if err := tw.WriteHeader(&tar.Header{
 		Name: "jp-pii-detect",
 		Mode: 0o755,
@@ -71,7 +73,43 @@ func writeFakeReleaseArchive(t *testing.T, root string) string {
 	if _, err := tw.Write([]byte(body)); err != nil {
 		t.Fatal(err)
 	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	writeChecksums(t, releaseDir, map[string]string{
+		testAsset: sha256File(t, archivePath),
+	})
 	return archivePath
+}
+
+func sha256File(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func writeChecksums(t *testing.T, dir string, sums map[string]string) {
+	t.Helper()
+	var b strings.Builder
+	for name, sum := range sums {
+		b.WriteString(sum)
+		b.WriteString("  ")
+		b.WriteString(name)
+		b.WriteString("\n")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "checksums.txt"), []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func distributionEnv(baseURL, installDir string) []string {
@@ -119,6 +157,26 @@ func TestInstallScriptInstallsFromReleaseArchive(t *testing.T) {
 	}
 }
 
+func TestInstallScriptRejectsChecksumMismatch(t *testing.T) {
+	releases := t.TempDir()
+	archive := writeFakeReleaseArchive(t, releases)
+	if err := os.WriteFile(archive, []byte("tampered archive"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	installDir := filepath.Join(t.TempDir(), "bin")
+
+	out, code := runScript(t, "scripts/install.sh", distributionEnv("file://"+releases, installDir))
+	if code == 0 {
+		t.Fatalf("install.sh should reject checksum mismatch\n%s", out)
+	}
+	if !strings.Contains(out, "checksum verification failed") {
+		t.Fatalf("install.sh should explain checksum failure, got:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(installDir, "jp-pii-detect")); !os.IsNotExist(err) {
+		t.Fatalf("binary should not be installed after checksum failure: %v", err)
+	}
+}
+
 func TestPreCommitScriptInstallsAndRunsScanner(t *testing.T) {
 	releases := t.TempDir()
 	writeFakeReleaseArchive(t, releases)
@@ -130,6 +188,36 @@ func TestPreCommitScriptInstallsAndRunsScanner(t *testing.T) {
 	}
 	if !strings.Contains(out, "fake-jp-pii-detect scan --staged") {
 		t.Fatalf("pre-commit should run scanner with scan --staged, got:\n%s", out)
+	}
+}
+
+func TestPreCommitLatestRefetchesOnEveryRun(t *testing.T) {
+	releases := t.TempDir()
+	writeFakeReleaseArchiveFor(t, releases, "latest", "#!/bin/sh\necho old-latest \"$@\"\n")
+	cacheDir := filepath.Join(t.TempDir(), "cache")
+	env := []string{
+		"JP_PII_DETECT_VERSION=latest",
+		"JP_PII_DETECT_OS=" + testOS,
+		"JP_PII_DETECT_ARCH=" + testArch,
+		"JP_PII_DETECT_RELEASE_BASE_URL=file://" + releases,
+		"JP_PII_DETECT_CACHE_DIR=" + cacheDir,
+	}
+
+	out, code := runScript(t, "scripts/pre-commit.sh", env)
+	if code != 0 {
+		t.Fatalf("first pre-commit.sh exit=%d\n%s", code, out)
+	}
+	if !strings.Contains(out, "old-latest scan --staged") {
+		t.Fatalf("first run should use old latest binary, got:\n%s", out)
+	}
+
+	writeFakeReleaseArchiveFor(t, releases, "latest", "#!/bin/sh\necho new-latest \"$@\"\n")
+	out, code = runScript(t, "scripts/pre-commit.sh", env)
+	if code != 0 {
+		t.Fatalf("second pre-commit.sh exit=%d\n%s", code, out)
+	}
+	if !strings.Contains(out, "new-latest scan --staged") {
+		t.Fatalf("latest should be re-fetched on second run, got:\n%s", out)
 	}
 }
 
@@ -181,10 +269,25 @@ func TestReleaseWorkflowPublishesPrebuiltAssets(t *testing.T) {
 		"GOOS=\"$GOOS\"",
 		"GOARCH=\"$GOARCH\"",
 		"jp-pii-detect_${GOOS}_${GOARCH}",
+		"go test ./...",
 		"gh release create",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("release workflow missing %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestReadmeDocumentsTagPinnedInstaller(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if strings.Contains(text, "main/scripts/install.sh | sh") {
+		t.Fatalf("README should not recommend executing the mutable main installer URL")
+	}
+	if !strings.Contains(text, "v0.1.0/scripts/install.sh") || !strings.Contains(text, "JP_PII_DETECT_VERSION=v0.1.0") {
+		t.Fatalf("README should show a tag-pinned installer URL and matching binary version")
 	}
 }

@@ -6,7 +6,7 @@ die() {
 	exit 1
 }
 
-normalize_os() {
+bin_name_for_os() {
 	case "$1" in
 		linux | Linux | darwin | Darwin) printf 'jp-pii-detect' ;;
 		windows | Windows_NT | MINGW* | MSYS* | CYGWIN*) printf 'jp-pii-detect.exe' ;;
@@ -35,10 +35,10 @@ if [ -z "$cache_root" ]; then
 fi
 
 install_dir="${cache_root}/${version}"
-bin_name=$(normalize_os "${JP_PII_DETECT_OS:-$(uname -s)}")
+bin_name=$(bin_name_for_os "${JP_PII_DETECT_OS:-$(uname -s)}")
 bin="${install_dir}/${bin_name}"
 
-if [ ! -x "$bin" ]; then
+if [ "$version" = "latest" ] || [ ! -x "$bin" ]; then
 	JP_PII_DETECT_VERSION="$version" "$script_dir/install.sh" --version "$version" --install-dir "$install_dir"
 fi
 

@@ -50,20 +50,19 @@
 ## インストール
 
 macOS / Linux / GitHub Actions の bash 環境では、GitHub Releases のビルド済みバイナリを取得します
-（Go のインストールは不要です）。
+（Go のインストールは不要です）。installer と取得するバイナリは同じタグに固定してください。
 
 ```console
-$ curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detecter/main/scripts/install.sh | sh
+$ curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detecter/v0.1.0/scripts/install.sh | JP_PII_DETECT_VERSION=v0.1.0 sh
 ```
 
-特定バージョンを使う場合:
-
-```console
-$ curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detecter/main/scripts/install.sh | JP_PII_DETECT_VERSION=v0.1.0 sh
-```
+`v0.1.0` は利用したいリリースタグに置き換えてください。installer は Release asset と
+`checksums.txt` を取得し、SHA-256 を検証してから展開します。
 
 インストール先は既定で `$HOME/.local/bin` です。変更する場合は
 `JP_PII_DETECT_INSTALL_DIR=/path/to/bin` を指定してください。
+installer は `sh`、`tar`、`curl` または `wget`、`sha256sum` または `shasum` を使います。
+Windows では Git Bash / MSYS2 などの POSIX shell 環境から実行してください。
 
 Go が入っている開発環境では従来どおり `go install` も使えます。
 
@@ -107,7 +106,8 @@ repos:
 
 フックは GitHub Releases のビルド済みバイナリを `~/.cache/jp-pii-detecter/pre-commit/`
 配下にキャッシュして実行するため、利用側の環境に Go は不要です。通常は `rev` に指定した
-タグと同じバージョンのバイナリを使います。
+タグと同じバージョンのバイナリを使います。`latest` を指定した場合は、古いキャッシュを
+使い続けないよう毎回 Release asset を取得し直します。
 
 ### 素の git hook
 

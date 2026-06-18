@@ -51,6 +51,29 @@ download() {
 	fi
 }
 
+sha256_file() {
+	path=$1
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum "$path" | awk '{print $1}'
+	elif command -v shasum >/dev/null 2>&1; then
+		shasum -a 256 "$path" | awk '{print $1}'
+	else
+		die "sha256sum or shasum is required to verify release assets"
+	fi
+}
+
+verify_checksum() {
+	archive=$1
+	checksums=$2
+	asset=$3
+	want=$(awk -v asset="$asset" '$2 == asset {print $1}' "$checksums")
+	[ -n "$want" ] || die "checksums.txt does not contain ${asset}"
+	got=$(sha256_file "$archive")
+	if [ "$got" != "$want" ]; then
+		die "checksum verification failed for ${asset}"
+	fi
+}
+
 repo=${JP_PII_DETECT_REPO:-baneido/jp-pii-detecter}
 version=${JP_PII_DETECT_VERSION:-latest}
 install_dir=${JP_PII_DETECT_INSTALL_DIR:-}
@@ -98,10 +121,13 @@ asset="jp-pii-detect_${goos}_${goarch}.tar.gz"
 if [ -n "${JP_PII_DETECT_RELEASE_BASE_URL:-}" ]; then
 	base=${JP_PII_DETECT_RELEASE_BASE_URL%/}
 	url="${base}/${version}/${asset}"
+	checksums_url="${base}/${version}/checksums.txt"
 elif [ "$version" = "latest" ]; then
 	url="https://github.com/${repo}/releases/latest/download/${asset}"
+	checksums_url="https://github.com/${repo}/releases/latest/download/checksums.txt"
 else
 	url="https://github.com/${repo}/releases/download/${version}/${asset}"
+	checksums_url="https://github.com/${repo}/releases/download/${version}/checksums.txt"
 fi
 
 if [ "$print_url" -eq 1 ]; then
@@ -121,7 +147,10 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 archive="${tmpdir}/${asset}"
+checksums="${tmpdir}/checksums.txt"
 download "$url" "$archive"
+download "$checksums_url" "$checksums"
+verify_checksum "$archive" "$checksums" "$asset"
 tar -xzf "$archive" -C "$tmpdir"
 
 src="${tmpdir}/${bin_name}"
@@ -132,6 +161,9 @@ fi
 
 mkdir -p "$install_dir"
 dest="${install_dir}/${bin_name}"
-cp "$src" "$dest"
-chmod 0755 "$dest"
+dest_tmp="${dest}.tmp.$$"
+rm -f "$dest_tmp"
+cp "$src" "$dest_tmp"
+chmod 0755 "$dest_tmp"
+mv "$dest_tmp" "$dest"
 printf 'Installed %s\n' "$dest"
