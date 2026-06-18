@@ -9,38 +9,19 @@ inputs:
     required: false
     default: scan --format github .
   version:
-    description: インストールするバージョン（go install の @ 以降）
+    description: インストールするバージョン（GitHub Releases のタグ、または latest）
     required: false
     default: latest
 runs:
   using: composite
   steps:
-    - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-      with:
-        go-version: stable
-        # setup-go 標準のキャッシュは利用側リポジトリの go.sum を前提と
-        # するため使わず、下の actions/cache で自前管理する。
-        cache: false
-    - id: go-env
+    - id: install
       run: |
-        echo "modcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
-        echo "buildcache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
-      shell: bash
-    - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-      with:
-        path: |
-          ${{ steps.go-env.outputs.modcache }}
-          ${{ steps.go-env.outputs.buildcache }}
-        # version=latest はキーが固定だと初回保存のままリリース後も
-        # 更新されないため、run_id で毎回保存し restore-keys で引き継ぐ。
-        key: jp-pii-detect-${{ runner.os }}-${{ inputs.version }}-${{ github.run_id }}
-        restore-keys: |
-          jp-pii-detect-${{ runner.os }}-${{ inputs.version }}-
-    - run: go install github.com/baneido/jp-pii-detecter/cmd/jp-pii-detect@${{ inputs.version }}
-      shell: bash
-    # GitHub ホストランナーは $GOPATH/bin が PATH に含まれるが、
-    # self-hosted ランナーでは保証されないため明示する。
-    - run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+        install_dir="${RUNNER_TEMP}/jp-pii-detect/bin"
+        "$GITHUB_ACTION_PATH/scripts/install.sh" \
+          --version "${{ inputs.version }}" \
+          --install-dir "$install_dir"
+        echo "$install_dir" >> "$GITHUB_PATH"
       shell: bash
     - run: jp-pii-detect ${{ inputs.args }}
       shell: bash

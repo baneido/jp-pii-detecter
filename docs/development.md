@@ -162,5 +162,12 @@ $ go run ./internal/dict/gen -input /path/to/utf_ken_all.zip -output internal/di
 
 ## リリース
 
-`go install ...@<version>` で配布するため、タグを切るだけで利用できます。
+`v*` タグを push すると `.github/workflows/release.yml` が Linux runner 上で
+`linux/darwin/windows` × `amd64/arm64` のビルド済みバイナリを作成し、
+GitHub Release に `jp-pii-detect_<goos>_<goarch>.tar.gz` と `checksums.txt` を添付します。
+
+GitHub Action と pre-commit フックはこの Release asset を取得して実行するため、
+利用側の環境に Go は不要です。Go が入っている開発環境向けには
+`go install github.com/baneido/jp-pii-detecter/cmd/jp-pii-detect@<version>` も引き続き使えます。
+
 README・action.yml の例で参照しているバージョン（`rev: v0.1.0` 等）も合わせて更新してください。

@@ -6,7 +6,7 @@
 コミット前（git hook）や CI/CD（GitHub Actions）で検出します。
 
 - **日本特化**: マイナンバー検査用数字の検証、全角・長音記号の正規化、和暦、JCB カードなどに対応
-- **高速**: Go 製シングルバイナリ。pre-commit ではステージ済み差分の追加行のみを走査
+- **高速**: Go 製シングルバイナリ（利用時に Go は不要）。pre-commit ではステージ済み差分の追加行のみを走査
 - **CI フレンドリー**: 終了コード・JSON・SARIF・GitHub Actions アノテーション出力
 - **二次漏えい防止**: 検出値は既定でマスク表示
 
@@ -49,6 +49,24 @@
 
 ## インストール
 
+macOS / Linux / GitHub Actions の bash 環境では、GitHub Releases のビルド済みバイナリを取得します
+（Go のインストールは不要です）。
+
+```console
+$ curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detecter/main/scripts/install.sh | sh
+```
+
+特定バージョンを使う場合:
+
+```console
+$ curl -fsSL https://raw.githubusercontent.com/baneido/jp-pii-detecter/main/scripts/install.sh | JP_PII_DETECT_VERSION=v0.1.0 sh
+```
+
+インストール先は既定で `$HOME/.local/bin` です。変更する場合は
+`JP_PII_DETECT_INSTALL_DIR=/path/to/bin` を指定してください。
+
+Go が入っている開発環境では従来どおり `go install` も使えます。
+
 ```console
 $ go install github.com/baneido/jp-pii-detecter/cmd/jp-pii-detect@latest
 ```
@@ -87,6 +105,10 @@ repos:
       - id: jp-pii-detect
 ```
 
+フックは GitHub Releases のビルド済みバイナリを `~/.cache/jp-pii-detecter/pre-commit/`
+配下にキャッシュして実行するため、利用側の環境に Go は不要です。通常は `rev` に指定した
+タグと同じバージョンのバイナリを使います。
+
 ### 素の git hook
 
 `.git/hooks/pre-commit`:
@@ -113,6 +135,9 @@ jobs:
         with:
           args: scan --diff origin/${{ github.base_ref }}...HEAD --format github
 ```
+
+この Action は GitHub Releases のビルド済みバイナリを取得して実行するため、
+利用側の workflow で `actions/setup-go` を追加する必要はありません。
 
 `--format github` を指定すると、検出箇所が PR の該当行にアノテーション表示されます。
 `--format sarif` の出力は GitHub Code Scanning に取り込めます。
