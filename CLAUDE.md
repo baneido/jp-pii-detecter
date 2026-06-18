@@ -49,4 +49,4 @@ Rules live in `internal/rule/builtin.go` (`Builtin()`); see `docs/development.md
 
 ## Releasing
 
-Distributed via `go install ...@<version>` — tagging is the release. Update version references in `README.md` and `action.yml` (e.g. `rev: v0.1.0`) to match the tag.
+Tagging `v*` triggers `.github/workflows/release.yml`, which cross-compiles prebuilt binaries for linux/darwin/windows on amd64/arm64 and uploads `jp-pii-detect_<goos>_<goarch>.tar.gz` assets plus `checksums.txt` to the GitHub Release. GitHub Action and pre-commit users download these assets, so they do not need Go installed. `go install ...@<version>` remains available for developer machines with Go. Update version references in `README.md` and `action.yml` (e.g. `rev: v0.1.0`) to match the tag.

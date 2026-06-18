@@ -1,0 +1,61 @@
+name: release
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - name: Test tagged commit
+        run: go test ./...
+      - name: Build release assets
+        run: |
+          set -eu
+          mkdir -p dist
+          for target in \
+            linux/amd64 \
+            linux/arm64 \
+            darwin/amd64 \
+            darwin/arm64 \
+            windows/amd64 \
+            windows/arm64
+          do
+            GOOS=${target%/*}
+            GOARCH=${target#*/}
+            asset="jp-pii-detect_${GOOS}_${GOARCH}"
+            out_dir="dist/${asset}"
+            bin_name="jp-pii-detect"
+            if [ "$GOOS" = "windows" ]; then
+              bin_name="jp-pii-detect.exe"
+            fi
+
+            mkdir -p "$out_dir"
+            CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build \
+              -trimpath \
+              -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
+              -o "${out_dir}/${bin_name}" \
+              ./cmd/jp-pii-detect
+            tar -czf "dist/${asset}.tar.gz" -C "$out_dir" "$bin_name"
+          done
+          (cd dist && sha256sum *.tar.gz > checksums.txt)
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/*.tar.gz dist/checksums.txt --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/checksums.txt \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes
+          fi
