@@ -1,6 +1,10 @@
 package rule
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/baneido/jp-pii-detector/internal/piifixtures"
+)
 
 // このファイルは internal/rule のヘルパー関数（validPhone / validEmail /
 // stripSeparators / containsASCIIAlnum）の「現状の振る舞い」を固定する
@@ -11,19 +15,20 @@ import "testing"
 // validPhone はマッチ文字列を受け取り、区切り文字（- / 半角スペース）や先頭の "+" を除去した上で、
 // 桁数・先頭桁・国番号（+81）規則を満たす電話番号だけを有効とする。
 func TestValidPhone(t *testing.T) {
+	piifixtures.Require(t)
 	tests := []struct {
 		name string
 		in   string
 		want bool
 	}{
-		// ---- 有効 ----
-		{"携帯 区切りあり", "090-1234-5678", true},
-		{"携帯 区切りなし", "09012345678", true},
-		{"固定 10 桁", "03-1234-5678", true},
-		{"IP 電話", "050-1234-5678", true},
-		{"国際表記 携帯", "+81-90-1234-5678", true},
-		{"国際表記 固定 9 桁", "+81-1-2345-6789", true},
-		// ---- 無効 ----
+		// ---- 有効（実在形式の値はフィクスチャから取得）----
+		{"携帯 区切りあり", piifixtures.MustGet(t, "rule.phone_mobile_sep"), true},
+		{"携帯 区切りなし", piifixtures.MustGet(t, "rule.phone_mobile_nosep"), true},
+		{"固定 10 桁", piifixtures.MustGet(t, "rule.phone_landline_sep"), true},
+		{"IP 電話", piifixtures.MustGet(t, "rule.phone_ip_sep"), true},
+		{"国際表記 携帯", piifixtures.MustGet(t, "rule.phone_mobile_intl"), true},
+		{"国際表記 固定 9 桁", piifixtures.MustGet(t, "rule.phone_landline_intl"), true},
+		// ---- 無効（意図的に不正な値・実在 PII ではないため inline）----
 		{"桁数不正（9 桁）", "0123-456-78", false},
 		{"第 2 桁が 0", "00-1234-5678", false},
 		{"11 桁の固定様式は実在しない", "0123-456-7890", false},
@@ -86,9 +91,9 @@ func TestStripSeparators(t *testing.T) {
 	tests := []struct {
 		in, want string
 	}{
-		{"090-1234-5678", "09012345678"},
+		{"000-0000-0000", "00000000000"},
 		{"1234 5678 9018", "123456789018"},
-		{"+81-90-1234-5678", "+819012345678"},
+		{"+81-90-0000-0000", "+819000000000"},
 		{"AB12345678CD", "AB12345678CD"},
 		{"", ""},
 		{"- -", ""},

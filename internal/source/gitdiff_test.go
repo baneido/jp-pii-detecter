@@ -9,15 +9,18 @@ import (
 
 	"github.com/baneido/jp-pii-detector/internal/config"
 	"github.com/baneido/jp-pii-detector/internal/detect"
+	"github.com/baneido/jp-pii-detector/internal/piifixtures"
 )
 
 func TestParseDiff(t *testing.T) {
+	piifixtures.Require(t)
+	phone := piifixtures.MustGet(t, "source.phone_mobile_sep")
 	diff := `diff --git a/users.csv b/users.csv
 index 1111111..2222222 100644
 --- a/users.csv
 +++ b/users.csv
 @@ -3,0 +4,2 @@ header
-+TEL: 090-1234-5678
++TEL: ` + phone + `
 +name,age
 diff --git a/old.txt b/old.txt
 deleted file mode 100644
@@ -33,7 +36,7 @@ diff --git a/docs/memo.md b/docs/memo.md
 `
 	got := ParseDiff(diff)
 	want := []AddedLine{
-		{File: "users.csv", Line: 4, Text: "TEL: 090-1234-5678"},
+		{File: "users.csv", Line: 4, Text: "TEL: " + phone},
 		{File: "users.csv", Line: 5, Text: "name,age"},
 		{File: "docs/memo.md", Line: 10, Text: "〒150-0043"},
 	}
@@ -53,14 +56,16 @@ func TestParseDiffBinaryAndEmpty(t *testing.T) {
 
 // core.quotePath=false で出力される非 ASCII ファイル名をそのまま扱える。
 func TestParseDiffJapaneseFilename(t *testing.T) {
+	piifixtures.Require(t)
+	phone := piifixtures.MustGet(t, "source.phone_mobile_sep")
 	diff := `diff --git a/顧客リスト.csv b/顧客リスト.csv
 --- a/顧客リスト.csv
 +++ b/顧客リスト.csv
 @@ -0,0 +1 @@
-+TEL: 090-1234-5678
++TEL: ` + phone + `
 `
 	got := ParseDiff(diff)
-	want := []AddedLine{{File: "顧客リスト.csv", Line: 1, Text: "TEL: 090-1234-5678"}}
+	want := []AddedLine{{File: "顧客リスト.csv", Line: 1, Text: "TEL: " + phone}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ParseDiff = %+v, want %+v", got, want)
 	}
@@ -71,13 +76,15 @@ func TestParseDiffJapaneseFilename(t *testing.T) {
 // 旧実装は b/ の除去を引用符の除去より先に行っていたため接頭辞が残った。
 // なおエスケープシーケンス（\t 等）の復元までは行わない。
 func TestParseDiffQuotedFilename(t *testing.T) {
+	piifixtures.Require(t)
+	phone := piifixtures.MustGet(t, "source.phone_mobile_sep")
 	diff := "diff --git \"a/tab\\tname.csv\" \"b/tab\\tname.csv\"\n" +
 		"--- \"a/tab\\tname.csv\"\n" +
 		"+++ \"b/tab\\tname.csv\"\n" +
 		"@@ -0,0 +1 @@\n" +
-		"+TEL: 090-1234-5678\n"
+		"+TEL: " + phone + "\n"
 	got := ParseDiff(diff)
-	want := []AddedLine{{File: `tab\tname.csv`, Line: 1, Text: "TEL: 090-1234-5678"}}
+	want := []AddedLine{{File: `tab\tname.csv`, Line: 1, Text: "TEL: " + phone}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ParseDiff = %+v, want %+v", got, want)
 	}
@@ -114,9 +121,11 @@ func git(t *testing.T, args ...string) {
 // ScanStaged が日本語ファイル名でも正しいパスで検出を報告できること
 // （core.quotePath 既定値では 8 進エスケープされ壊れていた）。
 func TestScanStagedJapaneseFilename(t *testing.T) {
+	piifixtures.Require(t)
 	repo := initTestRepo(t)
 	name := "顧客リスト.csv"
-	if err := os.WriteFile(filepath.Join(repo, name), []byte("氏名,電話\n山田,090-1234-5678\n"), 0o644); err != nil {
+	content := []byte("氏名,電話\n山田," + piifixtures.MustGet(t, "source.phone_mobile_sep") + "\n")
+	if err := os.WriteFile(filepath.Join(repo, name), content, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	git(t, "add", name)
@@ -165,14 +174,17 @@ func TestScanStagedSplitLabelAndValue(t *testing.T) {
 
 // ScanDiff がコミット間の追加行のみを走査すること。
 func TestScanDiffRange(t *testing.T) {
+	piifixtures.Require(t)
 	repo := initTestRepo(t)
+	base := "既存の電話: " + piifixtures.MustGet(t, "source.phone_mobile_nosep")
+	added := "追加の電話: " + piifixtures.MustGet(t, "source.phone_mobile_sep")
 	path := filepath.Join(repo, "memo.txt")
-	if err := os.WriteFile(path, []byte("既存の電話: 090-1111-2222\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(base+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	git(t, "add", ".")
 	git(t, "commit", "-q", "-m", "base")
-	if err := os.WriteFile(path, []byte("既存の電話: 090-1111-2222\n追加の電話: 090-3333-4444\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(base+"\n"+added+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	git(t, "add", ".")

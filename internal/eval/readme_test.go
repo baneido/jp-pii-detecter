@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/baneido/jp-pii-detector/internal/piifixtures"
 )
 
 const readmePath = "../../README.md"
@@ -45,6 +47,7 @@ func overallBadge(results []Result) string {
 // 評価データセットに対する実測値と一致することを検証する（CI の回帰ガード）。
 // -update 指定時は README のバッジを実測値で書き換えてから検証する。
 func TestReadmeBadges(t *testing.T) {
+	piifixtures.Require(t)
 	results, err := Evaluate()
 	if err != nil {
 		t.Fatal(err)

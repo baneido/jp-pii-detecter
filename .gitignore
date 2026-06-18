@@ -1,2 +1,6 @@
 /jp-pii-detect
 dist/
+
+# 評価データセット/テストフィクスチャのローカルコピー（実在しうる PII を含むため非コミット）。
+# CI と開発者は GCS から取得し、JP_PII_FIXTURES でパスを渡す。docs/development.md 参照。
+/pii-fixtures.json

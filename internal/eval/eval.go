@@ -4,29 +4,23 @@
 package eval
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"sort"
 
 	"github.com/baneido/jp-pii-detector/internal/config"
 	"github.com/baneido/jp-pii-detector/internal/detect"
+	"github.com/baneido/jp-pii-detector/internal/piifixtures"
 )
 
-// Case は 1 行の評価ケース。Want は、その行で検出されるべき
-// ルール ID の集合（空なら「何も検出されないべき」陰性ケース）。
-type Case struct {
-	Line  string
-	Want  []string
-	Spans []Span
-}
-
-// Span は 1 件の期待検出範囲。Start/End は 0 始まりのルーンオフセット
-// （End は半開区間）。Tags は easy/hard などの層化用メタデータ。
-type Span struct {
-	RuleID     string
-	Start, End int
-	Tags       []string
-}
+// Case / Span は評価ケースとその期待検出範囲。実在しうる PII を含む
+// 評価データセットは piifixtures（リポジトリ外 JSON）から読み込むため、
+// 型定義は piifixtures に置き、ここでは型別名で参照する。
+type (
+	Case = piifixtures.Case
+	Span = piifixtures.Span
+)
 
 // Score は TP/FP/FN と、それらから算出した指標。
 type Score struct {
@@ -45,12 +39,20 @@ type Result struct {
 
 // Evaluate はデータセット全体を走査し、ルールごとの指標を返す。
 // すべてのルールを評価対象にするため min_confidence=low で検出する。
+// ErrNoDataset は評価データセット（piifixtures）が取得できないことを表す。
+// 認証情報やフィクスチャ JSON が無い環境では、呼び出し側テストが Skip する。
+var ErrNoDataset = errors.New("評価データセットが利用できません（" + piifixtures.EnvVar + " を設定してください）")
+
 func Evaluate() ([]Result, error) {
-	return EvaluateCases(Dataset)
+	cases, ok := piifixtures.Dataset()
+	if !ok {
+		return nil, ErrNoDataset
+	}
+	return EvaluateCases(cases)
 }
 
-// EvaluateCases は指定されたケース集合を評価する。テストや将来の外部データセット
-// 取り込みではこちらを使い、Evaluate は同梱 Dataset を渡す薄いラッパーにする。
+// EvaluateCases は指定されたケース集合を評価する。Evaluate は piifixtures から
+// 読み込んだ外部データセットをこれに渡す薄いラッパーで、テストは任意のケースを渡せる。
 func EvaluateCases(cases []Case) ([]Result, error) {
 	cfg, err := config.Parse(`min_confidence = "low"`)
 	if err != nil {

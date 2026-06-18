@@ -1,7 +1,7 @@
 # 開発者向けガイド
 
-jp-pii-detect のビルド・テスト・内部構成と、検出ルールの追加方法をまとめます。
-利用方法は [README](../README.md)、検出手法の調査・設計判断は
+jp-pii-detect のビルド、テスト、内部構成と、検出ルールの追加方法をまとめます。
+利用方法は [README](../README.md)、検出手法の調査と設計判断は
 [detection-methods.md](detection-methods.md) を参照してください。
 
 ## ビルドとテスト
@@ -33,20 +33,49 @@ $ go test -bench . -benchmem ./internal/normalize/ ./internal/detect/
 
 ## 検出精度の計測
 
-`internal/eval` にルールごとの陽性・陰性ケースを集めたラベル付き評価データセット
-（[dataset.go](../internal/eval/dataset.go)）と、適合率・再現率・F1 を計測する
-ハーネスがあります。README の検出精度バッジと [accuracy.md](accuracy.md) はこの実測値です。
+`internal/eval` にルールごとの陽性と陰性のケースを集めたラベル付き評価データセットと、
+適合率、再現率、F1 を計測するハーネスがあります。データセットは実在しうる PII を含むため
+リポジトリにはコミットせず、外部ストレージ（GCS）で管理して `JP_PII_FIXTURES` 経由で読み込みます
+（後述の「評価データセット・テストフィクスチャの取得」を参照）。README の検出精度バッジと
+[accuracy.md](accuracy.md) はこの実測値です。`JP_PII_FIXTURES` が未設定の環境では eval 系テストは
+`t.Skip` され、ローカル/オフラインでも `go test ./...` は緑のままになります。
 
 ```console
+$ export JP_PII_FIXTURES=$PWD/pii-fixtures.json   # GCS から取得（取得手順は後述）
 $ go test ./internal/eval            # 実測 F1 と wantF1・README バッジの一致を検証
 $ go test ./internal/eval -update    # docs/accuracy.md と README のバッジを実測値で再生成
 ```
 
 `eval_test.go` の `TestAccuracy` は実測 F1 が `wantF1` と一致するか、
-`readme_test.go` の `TestReadmeBadges` は README の総合・ルール別バッジが
+`readme_test.go` の `TestReadmeBadges` は README の総合バッジとルール別バッジが
 実測値と一致するかを検証します。ルールやデータセットを変えて精度が動くと
 CI が落ちるので、**`wantF1` を更新し、`-update` で README のバッジと
 `docs/accuracy.md` を再生成**してください。
+
+## 評価データセット・テストフィクスチャの取得
+
+評価データセットと各テストのフィクスチャは、実在しうる PII（電話番号・氏名・住所など）を含むため
+リポジトリにコミットせず、非公開の GCS バケットで管理します。テスト時は環境変数 `JP_PII_FIXTURES`
+にローカル JSON のパスを渡し、[`internal/piifixtures`](../internal/piifixtures/piifixtures.go) が
+読み込みます。未設定・取得不可なら依存テストは `t.Skip` され、ビルド・dogfooding・その他のテストは通ります。
+
+ローカル開発（GCS への閲覧権限が必要）:
+
+```console
+$ gcloud auth application-default login
+$ gcloud storage cp gs://<bucket>/pii-fixtures.json ./pii-fixtures.json
+$ export JP_PII_FIXTURES=$PWD/pii-fixtures.json
+$ go test ./...
+```
+
+`pii-fixtures.json` は `.gitignore` 済みでコミットされません。JSON スキーマは
+`{ "strings": { "<key>": "<値>" }, "dataset": [ { "line", "want", "spans" } ] }` で、
+`internal/piifixtures/piifixtures.go` のコメントに定義があります。値を編集したら GCS に再アップロードします。
+
+CI（GitHub Actions）は GitHub OIDC → GCP Workload Identity Federation で認証し、サービスアカウントの
+鍵を持たずに取得します。リポジトリ変数 `JP_PII_FIXTURES_PROVIDER`（プロバイダのリソース名）・
+`JP_PII_FIXTURES_SA`（サービスアカウントのメール）・`JP_PII_FIXTURES_BUCKET`（バケット名）を設定すると
+`.github/workflows/ci.yml` が取得します。未設定なら取得をスキップし、eval 系テストは Skip されます。
 
 ## プロジェクト構成
 
@@ -61,19 +90,20 @@ internal/
   checksum/  チェックディジット検証（マイナンバー・Luhn・カードブランド）
   dict/      IANA TLD などの埋め込み辞書
   report/    出力フォーマット（text/json/sarif/github）とマスキング
+  piifixtures/ 実在しうる PII を含む外部フィクスチャ（JP_PII_FIXTURES の JSON）のローダ
   eval/      ラベル付き評価データセットと検出精度（適合率・再現率・F1）の計測
 ```
 
 ### 検出パイプライン
 
 1. **source** が走査対象を列挙する。フルスキャンはファイルツリーを walk し、
-   バイナリ（先頭 8KB に NUL）・5MB 超・`node_modules` 等の依存ディレクトリを除外。
+   バイナリ（先頭 8KB に NUL）、5MB 超、`node_modules` 等の依存ディレクトリを除外。
    git モードは `git diff -U0` の追加行のみを対象にする。
 2. **detect.ScanLine** が 1 行ごとに処理する。
-   - **normalize.Line** で全角英数字・ハイフン類・数字隣接の長音記号を半角化する。
+   - **normalize.Line** で全角英数字、ハイフン類、数字隣接の長音記号を半角化する。
      変換はルーン単位の 1:1 に限定しているため、正規化後の位置がそのまま元テキストの
      位置になり、列番号の報告に逆引きが不要。
-   - ルールの `Prefilter`（数字・`@`・日本語などの必須文字種）を含まない行は
+   - ルールの `Prefilter`（数字、`@`、日本語などの必須文字種）を含まない行は
      正規表現マッチ自体をスキップする。大半のルールは数字必須のため、
      数字を含まないコード行がほぼ無コストになる。
    - 各ルールのパターンを正規表現でマッチし、`Validate`（チェックディジット等）と
@@ -84,12 +114,12 @@ internal/
      ような誤昇格を避ける。単語境界で見つからない場合は、行中の識別子を camelCase /
      snake_case / kebab-case の構成語に分割して照合するため、`account_no` が
      `bankAccountNo` を、`phone` が `phoneNumber` を拾える（`smartphone` のように
-     語の途中に埋もれた場合は成立しない）。`NegativeContext` が近傍にある場合は、金額・数量・連番 ID と
+     語の途中に埋もれた場合は成立しない）。`NegativeContext` が近傍にある場合は、金額、数量、連番 ID と
      みなして検出を棄却する。`RequireContext` のパターンはキーワードの存在が前提のため
      昇格せず、`Base` の信頼度のまま報告する。
    - **resolveOverlaps** で範囲が重なる検出を信頼度（同率なら長い方）で 1 件に集約する。
    - **detect.ScanContent** は通常の行単位検出に加え、隣接 2 行を結合した仮想ウィンドウを
-     `RequireContext` ルールに限定して走査する。検出位置は元の行・列へマップし直す。
+     `RequireContext` ルールに限定して走査する。検出位置は元の行と列へマップし直す。
 3. **report** が `min_confidence` で絞った結果を指定フォーマットで出力する。
    検出値は既定でマスクされる。JSON 出力では `--explain` 指定時のみ `reason` を含める。
 
@@ -128,9 +158,9 @@ internal/
 - **コンテキストの設計**: ASCII キーワードは単語境界つき、加えて camelCase /
   snake_case / kebab-case の識別子を構成語に分割して照合される（`account_no` ⇔
   `bankAccountNo`）。桁数だけのルールは
-  `RequireContextWindow` で肯定語を近接必須にし、金額・数量・連番 ID と衝突しやすい場合は
+  `RequireContextWindow` で肯定語を近接必須にし、金額、数量、連番 ID と衝突しやすい場合は
   `NegativeContext` を設定する。
-- **Prefilter**: パターンが特定の文字種（数字・`@`・日本語）なしにマッチし得ない
+- **Prefilter**: パターンが特定の文字種（数字、`@`、日本語）なしにマッチし得ない
   場合は `Prefilter` を設定する。該当文字を含まない行の走査が丸ごと省ける。
   迷ったら未設定（常に走査）が安全。
 - **検証ロジック**: チェックディジットなどは `internal/checksum` に置き、独立にテストする。
@@ -138,7 +168,7 @@ internal/
 - **高再現率ルール**: 偽陽性リスクが高いルールは `internal/rule/high_recall.go` の
   `HighRecallRuleIDs()` に追加し、既定では `[rules] high_recall = true` または
   `--high-recall` が指定されたときだけ有効になるようにする。
-- **テスト**: 検出・非検出の両方を [`internal/detect/detect_test.go`](../internal/detect/detect_test.go) に追加する。
+- **テスト**: 検出と非検出の両方を [`internal/detect/detect_test.go`](../internal/detect/detect_test.go) に追加する。
   特に「隣接する複数件」「コンテキスト有無での信頼度」「長い数字列の一部は対象外」を確認すること。
 
 ### 埋め込み辞書の更新
@@ -174,4 +204,4 @@ GitHub Action と pre-commit フックはこの Release asset を取得して実
 Go が入っている開発環境向けには
 `go install github.com/baneido/jp-pii-detector/cmd/jp-pii-detect@<version>` も引き続き使えます。
 
-README・action.yml の例で参照しているバージョン（`rev: v0.1.0` 等）も合わせて更新してください。
+README と action.yml の例で参照しているバージョン（`rev: v0.1.0` 等）も合わせて更新してください。

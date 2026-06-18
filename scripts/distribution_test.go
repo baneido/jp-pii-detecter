@@ -287,7 +287,7 @@ func TestReadmeDocumentsTagPinnedInstaller(t *testing.T) {
 	if strings.Contains(text, "main/scripts/install.sh | sh") {
 		t.Fatalf("README should not recommend executing the mutable main installer URL")
 	}
-	if !strings.Contains(text, "v0.1.0/scripts/install.sh") || !strings.Contains(text, "JP_PII_DETECT_VERSION=v0.1.0") {
+	if !strings.Contains(text, "v0.1.8/scripts/install.sh") || !strings.Contains(text, "JP_PII_DETECT_VERSION=v0.1.8") {
 		t.Fatalf("README should show a tag-pinned installer URL and matching binary version")
 	}
 }
