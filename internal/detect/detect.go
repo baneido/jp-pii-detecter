@@ -57,6 +57,10 @@ type Detector struct {
 	// ctxTokens は ASCII コンテキスト語をあらかじめ識別子トークン列に分割した
 	// キャッシュ（キーワードは静的なので行ごとに再分割しないため）。
 	ctxTokens map[string][]string
+	// crossLineName は person-name-structured ルール（有効時のみ非 nil）。構造化・
+	// 複数行の氏名検出を ScanContent で行うかの判定と、検出結果の ID・説明の
+	// 単一の出所として使う。高再現率モードでのみ有効になる。
+	crossLineName *rule.Rule
 }
 
 // New は設定に基づいて Detector を構築する。
@@ -70,9 +74,14 @@ func New(cfg *config.Config) (*Detector, error) {
 		disabled[id] = true
 	}
 	var rules []rule.Rule
+	var crossLineName *rule.Rule
 	for _, r := range rule.Builtin() {
 		if !disabled[r.ID] {
 			rules = append(rules, r)
+			if r.ID == "person-name-structured" {
+				cr := r
+				crossLineName = &cr
+			}
 		}
 	}
 	normStopwords := make([]string, len(cfg.Allowlist.Stopwords))
@@ -97,7 +106,7 @@ func New(cfg *config.Config) (*Detector, error) {
 			}
 		}
 	}
-	return &Detector{rules: rules, cfg: cfg, minConf: minConf, normStopwords: normStopwords, ctxTokens: ctxTokens}, nil
+	return &Detector{rules: rules, cfg: cfg, minConf: minConf, normStopwords: normStopwords, ctxTokens: ctxTokens, crossLineName: crossLineName}, nil
 }
 
 // Rules は有効なルール一覧を返す。
@@ -116,6 +125,9 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 	}
 	for i := 0; i+1 < len(lines); i++ {
 		candidates = append(candidates, d.scanAdjacentLines(file, i+1, lines[i], lines[i+1])...)
+	}
+	if d.crossLineName != nil {
+		candidates = append(candidates, d.scanCrossLineNames(file, lines)...)
 	}
 
 	seen := map[string]bool{}
@@ -195,6 +207,61 @@ func (d *Detector) scanAdjacentLines(file string, firstLineNo int, first, second
 			continue
 		}
 		out = append(out, f)
+	}
+	return out
+}
+
+// scanCrossLineNames はフォーム・設定ファイルで氏名のラベルと値が別の行に
+// 分かれて現れるケース（例: `氏名:` の次行に `山田太郎`）を検出する。同一行
+// 前提の person-name ルールでは取りこぼすため、ScanContent から隣接行ごとに
+// 呼ぶ。person-name-structured（高再現率）が有効なときだけ実行され、eval が使う
+// ScanLine 経路は通らないため評価指標には影響しない。
+//
+// 値は CrossLineNameValueRe で取り出し、ValidCrossLineName（姓名辞書照合・
+// プレースホルダ/組織名棄却）で検証する。同一行の強いラベルより厳しく辞書照合を
+// 必須にするのは、クロスラインの「次行＝値」前提が同一行ほど強くないため。
+func (d *Detector) scanCrossLineNames(file string, lines []string) []Finding {
+	if rule.Medium < d.minConf {
+		return nil
+	}
+	var out []Finding
+	for i := 0; i+1 < len(lines); i++ {
+		label, value := lines[i], lines[i+1]
+		// ラベル行・値行はそれぞれ「ラベルと区切りだけ」「氏名だけ」をアンカー付きで
+		// 要求するため、行末コメント（jp-pii-detector:ignore を含む）が付くと正規表現が
+		// マッチせず自然に抑制される。明示的な ignore マーカー判定は不要。
+		if !rule.CrossLineNameLabelRe.MatchString(normalize.Line(label)) {
+			continue
+		}
+		normValue := normalize.Line(value)
+		m := rule.CrossLineNameValueRe.FindStringSubmatchIndex(normValue)
+		if m == nil || m[2] < 0 {
+			continue
+		}
+		entity := normValue[m[2]:m[3]]
+		if !rule.ValidCrossLineName(entity) || d.allowlisted(entity) {
+			continue
+		}
+		// 正規化は 1:1（ルーン数保存）のため、norm 上のルーン位置は元行と一致する。
+		rs := len([]rune(normValue[:m[2]]))
+		re := rs + len([]rune(entity))
+		origRunes := []rune(value)
+		out = append(out, Finding{
+			RuleID:      d.crossLineName.ID,
+			Description: d.crossLineName.Description,
+			File:        file,
+			Line:        i + 2,
+			Column:      rs + 1,
+			Match:       string(origRunes[rs:re]),
+			Confidence:  rule.Medium,
+			Reason: DetectReason{
+				BaseConfidence:  rule.Medium.String(),
+				FinalConfidence: rule.Medium.String(),
+				Validated:       true,
+			},
+			start: rs,
+			end:   re,
+		})
 	}
 	return out
 }

@@ -892,3 +892,93 @@ func TestScanContentRejectsCrossLineNegativeContext(t *testing.T) {
 	// ネガティブコンテキストが遠い場合は検出する。
 	assertRules(t, d.ScanContent("f.txt", "口座番号: "+bankAccount+strings.Repeat("あ", 25)+"\n円"), "jp-bank-account")
 }
+
+// 構造化・複数行の氏名検出（person-name-structured）。値は埋め込み姓名辞書に
+// 含まれる一般的な氏名（山田太郎 等）のリテラルを使い、外部フィクスチャ無しでも
+// 実行できるようにしている（dict/names_test.go と同じ方針）。
+const highRecallTOML = "[rules]\nhigh_recall = true\n"
+
+func TestCrossLineNameLabelThenValue(t *testing.T) {
+	d := newDetector(t, highRecallTOML)
+	fs := d.ScanContent("f.txt", "氏名:\n山田太郎")
+	assertRules(t, fs, "person-name-structured")
+	if fs[0].Line != 2 || fs[0].Column != 1 {
+		t.Fatalf("location = %d:%d, want 2:1", fs[0].Line, fs[0].Column)
+	}
+	if fs[0].Match != "山田太郎" {
+		t.Fatalf("match = %q, want 山田太郎", fs[0].Match)
+	}
+	if fs[0].Confidence != rule.Medium {
+		t.Fatalf("confidence = %v, want medium", fs[0].Confidence)
+	}
+}
+
+func TestCrossLineNameNormalizationAndQuotes(t *testing.T) {
+	d := newDetector(t, highRecallTOML)
+	cases := []struct {
+		name       string
+		content    string
+		wantLine   int
+		wantColumn int
+		wantMatch  string
+	}{
+		// 全角コロン・全角スペースのインデントは正規化で半角になり、列位置は元行基準。
+		{"全角コロン + 全角スペース", "お名前：\n　鈴木花子", 2, 2, "鈴木花子"},
+		// JSON 風キー引用符と値の引用符・インデント。
+		{"引用符付きキーと値", "\"customer_name\":\n  \"田中一郎\"", 2, 4, "田中一郎"},
+		// ASCII の強いラベル。
+		{"full_name", "full_name:\n山田太郎", 2, 1, "山田太郎"},
+		// 値が空白区切りの姓名。
+		{"空白区切りの姓名", "氏名:\n山田 太郎", 2, 1, "山田 太郎"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := d.ScanContent("f.txt", tc.content)
+			assertRules(t, fs, "person-name-structured")
+			if fs[0].Line != tc.wantLine || fs[0].Column != tc.wantColumn {
+				t.Fatalf("location = %d:%d, want %d:%d", fs[0].Line, fs[0].Column, tc.wantLine, tc.wantColumn)
+			}
+			if fs[0].Match != tc.wantMatch {
+				t.Fatalf("match = %q, want %q", fs[0].Match, tc.wantMatch)
+			}
+		})
+	}
+}
+
+func TestCrossLineNameRejectsNonNames(t *testing.T) {
+	d := newDetector(t, highRecallTOML)
+	// 組織名・プレースホルダ・辞書外の一般名詞は次行に来ても検出しない。
+	for _, value := range []string{"株式会社", "未定", "プロジェクト", "該当なし"} {
+		assertRules(t, d.ScanContent("f.txt", "氏名:\n"+value))
+	}
+}
+
+func TestCrossLineNameOnlyStrongLabels(t *testing.T) {
+	d := newDetector(t, highRecallTOML)
+	// 弱いラベル（姓・名 の単一フィールド）のクロスライン結合は本スライスの対象外。
+	// 姓:\n山田 は構造化ルールでは検出しない（姓名ペア結合は今後の拡張）。
+	assertRules(t, d.ScanContent("f.txt", "姓:\n山田"))
+}
+
+func TestCrossLineNameDisabledByDefault(t *testing.T) {
+	d := newDetector(t, "")
+	// 高再現率モードでなければ構造化クロスライン検出は走らない（既定挙動を変えない）。
+	assertRules(t, d.ScanContent("f.txt", "氏名:\n山田太郎"))
+}
+
+func TestCrossLineNameSameLineUnaffected(t *testing.T) {
+	// 同一行に値があるラベルは従来どおり person-name（Low）で検出し、構造化ルールでは
+	// 二重に拾わない（ラベル行は値を伴わない場合のみマッチするため）。Low を見るため
+	// min_confidence=low と高再現率を併用する。
+	d := newDetector(t, "min_confidence = \"low\"\n[rules]\nhigh_recall = true\n")
+	fs := d.ScanContent("f.txt", "氏名: 山田太郎")
+	assertRules(t, fs, "person-name")
+}
+
+func TestCrossLineNameSuppressedByTrailingContent(t *testing.T) {
+	d := newDetector(t, highRecallTOML)
+	// 値行は「氏名だけ」をアンカー付きで要求するため、行末コメント（ignore マーカー
+	// 含む）が付くと検出しない。利用者はこれで個別の偽陽性を抑制できる。
+	assertRules(t, d.ScanContent("f.txt", "氏名:\n山田太郎 // "+IgnoreMarker))
+	assertRules(t, d.ScanContent("f.txt", "氏名:\n山田太郎（備考）"))
+}
