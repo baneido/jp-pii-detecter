@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/baneido/jp-pii-detector/internal/dict"
 )
 
 // bitSet はビットセット bs のインデックス n のビットが立っているかを返す（テスト用）。
@@ -17,7 +19,6 @@ func TestGeneratePostalFromCSV(t *testing.T) {
 	dir := t.TempDir()
 	input := filepath.Join(dir, "KEN_ALL.CSV")
 	bitsetPath := filepath.Join(dir, "postal_codes.bitset")
-	prefixPath := filepath.Join(dir, "postal_prefixes.txt")
 
 	csv := "" +
 		`"13101","100  ","1000001","ﾄｳｷｮｳﾄ","ﾁﾖﾀﾞｸ","ﾁﾖﾀﾞ","東京都","千代田区","千代田"` + "\n" +
@@ -27,7 +28,7 @@ func TestGeneratePostalFromCSV(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := generatePostal(input, bitsetPath, prefixPath); err != nil {
+	if err := generatePostal(input, bitsetPath); err != nil {
 		t.Fatal(err)
 	}
 
@@ -35,8 +36,8 @@ func TestGeneratePostalFromCSV(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(bitset) != postalBitsetSize {
-		t.Fatalf("bitset size = %d, want %d", len(bitset), postalBitsetSize)
+	if len(bitset) != dict.PostalBitsetSize {
+		t.Fatalf("bitset size = %d, want %d", len(bitset), dict.PostalBitsetSize)
 	}
 	// 入力にある 7 桁はビットが立ち、ない 7 桁は立たない。
 	for _, code := range []uint32{1000001, 1040061, 1000011} {
@@ -48,14 +49,6 @@ func TestGeneratePostalFromCSV(t *testing.T) {
 		if bitSet(bitset, code) {
 			t.Errorf("code %07d should not be set", code)
 		}
-	}
-
-	prefixes, err := os.ReadFile(prefixPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := "100\n104\n"; string(prefixes) != want {
-		t.Fatalf("generated prefixes = %q, want %q", string(prefixes), want)
 	}
 }
 
@@ -73,8 +66,7 @@ func TestGeneratePostalFromZip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// -prefixes 省略時はビットセットのみ生成する。
-	if err := generatePostal(input, bitsetPath, ""); err != nil {
+	if err := generatePostal(input, bitsetPath); err != nil {
 		t.Fatal(err)
 	}
 
@@ -89,6 +81,33 @@ func TestGeneratePostalFromZip(t *testing.T) {
 	}
 	if bitSet(bitset, 5300002) {
 		t.Error("code 5300002 should not be set")
+	}
+}
+
+// 7 桁郵便番号を持たない行はスキップし、有効な行だけを取り込むこと（生成全体は中断しない）。
+func TestGeneratePostalSkipsInvalidRows(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "KEN_ALL.CSV")
+	bitsetPath := filepath.Join(dir, "postal_codes.bitset")
+
+	csv := "" +
+		`"13101","100  ","1000001","ﾄｳｷｮｳﾄ","ﾁﾖﾀﾞｸ","ﾁﾖﾀﾞ","東京都","千代田区","千代田"` + "\n" +
+		`broken,row` + "\n" + // 列不足
+		`"x","y","ABCDEFG","z"` + "\n" + // 7 桁数字でない
+		`"13103","105  ","1000011","ﾄｳｷｮｳﾄ","ﾐﾅﾄｸ","ｼﾊﾞｺｳｴﾝ","東京都","港区","芝公園"` + "\n"
+	if err := os.WriteFile(input, []byte(csv), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := generatePostal(input, bitsetPath); err != nil {
+		t.Fatal(err)
+	}
+	bitset, err := os.ReadFile(bitsetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bitSet(bitset, 1000001) || !bitSet(bitset, 1000011) {
+		t.Error("有効行の 7 桁が取り込まれていない")
 	}
 }
 

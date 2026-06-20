@@ -51,16 +51,17 @@ func scanHunk(d *detect.Detector, cfg *config.Config, h fileHunk) []detect.Findi
 	if h.File == "" || !cfg.PathAllowed(h.File) {
 		return nil
 	}
-	texts := make([]string, len(h.Lines))
+	dlines := make([]detect.DiffLine, len(h.Lines))
 	for i, l := range h.Lines {
-		texts[i] = l.Text
+		dlines[i] = detect.DiffLine{Text: l.Text, Added: l.Added}
 	}
 	var findings []detect.Finding
-	for _, f := range d.ScanContent(h.File, strings.Join(texts, "\n")) {
-		// ScanContent の行番号はウィンドウ内 1 始まり。元ファイルの行番号へ写像し、
-		// その行が追加行のときだけ報告する。
+	// ScanDiffHunk は検出値が追加行に乗る finding だけを返す（文脈行は正の
+	// コンテキスト補完にのみ使う）。行番号はウィンドウ内 1 始まりなので、
+	// 元ファイルの行番号へ写像する。
+	for _, f := range d.ScanDiffHunk(h.File, dlines) {
 		idx := f.Line - 1
-		if idx < 0 || idx >= len(h.Lines) || !h.Lines[idx].Added {
+		if idx < 0 || idx >= len(h.Lines) {
 			continue
 		}
 		f.Line = h.Lines[idx].Line
@@ -106,12 +107,18 @@ func ParseDiff(diff string) []AddedLine {
 
 // parseDiffHunks は unified diff を hunk 単位に分解する。各 hunk には文脈行
 // （' '）と追加行（'+'）を新ファイル順に保持する（削除行は新ファイルに存在
-// しないため保持しない）。ファイルパス・行番号の解釈は ParseDiff と共通。
+// しないため保持しない）。
+//
+// hunk ヘッダの行数（@@ -a,b +c,d @@ の b・d）でカウントして本文の終端を判定し、
+// 本文中は先頭 1 文字だけで分類する。これにより、内容が "++ " で始まる追加行
+// （diff 上は "+++ " と出力される）をファイルヘッダと誤認しない。
 func parseDiffHunks(diff string) []fileHunk {
 	var hunks []fileHunk
 	var cur *fileHunk
 	file := ""
 	newLine := 0
+	oldRemaining, newRemaining := 0, 0
+	inHunk := func() bool { return oldRemaining > 0 || newRemaining > 0 }
 	flush := func() {
 		if cur != nil && len(cur.Lines) > 0 {
 			hunks = append(hunks, *cur)
@@ -119,6 +126,34 @@ func parseDiffHunks(diff string) []fileHunk {
 		cur = nil
 	}
 	for line := range strings.SplitSeq(diff, "\n") {
+		if inHunk() {
+			// hunk 本文。先頭 1 文字で分類する（"+++"/"---" も本文の内容行として扱う）。
+			switch {
+			case strings.HasPrefix(line, "+"):
+				if cur != nil {
+					cur.Lines = append(cur.Lines, diffLine{Line: newLine, Text: line[1:], Added: true})
+				}
+				newLine++
+				newRemaining--
+			case strings.HasPrefix(line, "-"):
+				oldRemaining-- // 削除行は新ファイルに存在しない
+			case strings.HasPrefix(line, `\`):
+				// "\ No newline at end of file" — 行数に影響しない
+			default: // 文脈行（先頭スペース。空文脈行は " " のみ）
+				text := line
+				if strings.HasPrefix(line, " ") {
+					text = line[1:]
+				}
+				if cur != nil {
+					cur.Lines = append(cur.Lines, diffLine{Line: newLine, Text: text, Added: false})
+				}
+				newLine++
+				newRemaining--
+				oldRemaining--
+			}
+			continue
+		}
+		// ヘッダ領域。
 		switch {
 		case strings.HasPrefix(line, "+++ "):
 			flush()
@@ -131,46 +166,57 @@ func parseDiffHunks(diff string) []fileHunk {
 				file = ""
 			}
 		case strings.HasPrefix(line, "--- "):
-			// 旧ファイルパス。'-' 始まりだが削除行ではないので何もしない
-			// （下の '+' / ' ' / '-' 判定に流さないために明示的に分岐する）。
+			// 旧ファイルパス。'-' 始まりだが削除行ではないので何もしない。
 		case strings.HasPrefix(line, "@@ "):
 			flush()
-			newLine = parseHunkNewStart(line)
-			if file != "" {
+			var newStart int
+			newStart, newRemaining, oldRemaining = parseHunkHeader(line)
+			// 新ファイル開始行が不正（標準 git では非到達）なら hunk を作らず、
+			// Line:0 の finding が出ないようにする。本文はカウントで読み飛ばす。
+			if file != "" && newStart >= 1 {
 				cur = &fileHunk{File: file}
-			}
-		case strings.HasPrefix(line, "+"):
-			if cur != nil {
-				cur.Lines = append(cur.Lines, diffLine{Line: newLine, Text: strings.TrimPrefix(line, "+"), Added: true})
-				newLine++
-			}
-		case strings.HasPrefix(line, " "):
-			if cur != nil {
-				cur.Lines = append(cur.Lines, diffLine{Line: newLine, Text: line[1:], Added: false})
-				newLine++
+				newLine = newStart
 			}
 		}
-		// '-'（削除行）やその他のメタ行はスキップする（newLine も進めない）。
 	}
 	flush()
 	return hunks
 }
 
-// parseHunkNewStart は hunk ヘッダ（例: @@ -10,2 +15,3 @@）から新ファイル側の
-// 開始行番号を取り出す。
-func parseHunkNewStart(line string) int {
-	for p := range strings.FieldsSeq(line) {
-		numPart, ok := strings.CutPrefix(p, "+")
-		if !ok {
-			continue
-		}
-		if i := strings.IndexByte(numPart, ','); i >= 0 {
-			numPart = numPart[:i]
-		}
-		if n, err := strconv.Atoi(numPart); err == nil {
-			return n
-		}
-		break
+// parseHunkHeader は hunk ヘッダ（例: @@ -10,2 +15,3 @@ func）から新ファイル側の
+// 開始行番号・新ファイル行数・旧ファイル行数を取り出す。個数省略時は 1。
+// 関数名コンテキスト（2 つ目の @@ 以降）に紛れた +/- を誤読しないよう、
+// @@ と @@ の間のレンジ部だけを解析する。
+func parseHunkHeader(line string) (newStart, newCount, oldCount int) {
+	newStart, newCount, oldCount = 0, 1, 1
+	inner := line
+	if i := strings.Index(inner, "@@"); i >= 0 {
+		inner = inner[i+2:]
 	}
-	return 0
+	if i := strings.Index(inner, "@@"); i >= 0 {
+		inner = inner[:i]
+	}
+	for tok := range strings.FieldsSeq(inner) {
+		if rest, ok := strings.CutPrefix(tok, "+"); ok {
+			newStart, newCount = parseStartCount(rest)
+		} else if rest, ok := strings.CutPrefix(tok, "-"); ok {
+			_, oldCount = parseStartCount(rest)
+		}
+	}
+	return
+}
+
+// parseStartCount は "15,3" や "15" を start=15, count=3（省略時 1）に分解する。
+func parseStartCount(s string) (start, count int) {
+	count = 1
+	if i := strings.IndexByte(s, ','); i >= 0 {
+		if n, err := strconv.Atoi(s[i+1:]); err == nil {
+			count = n
+		}
+		s = s[:i]
+	}
+	if n, err := strconv.Atoi(s); err == nil {
+		start = n
+	}
+	return
 }
