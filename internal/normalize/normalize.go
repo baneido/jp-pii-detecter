@@ -82,8 +82,8 @@ func Line(s string) string {
 	for i, r := range rs {
 		rs[i] = mapRune(r)
 	}
-	// \u9577\u97f3\u8a18\u53f7\u306e\u6570\u5b57\u96a3\u63a5\u5224\u5b9a\u306f\u5199\u50cf\u5f8c\u306e\u5024\u3067\u884c\u3046\u3002mapRune \u306f\u300c\u30fc\u300d\u3092\u5909\u3048\u306a\u3044
-	// \u305f\u3081\u5199\u50cf\u5f8c\u3082\u4f4d\u7f6e\u306f\u305d\u306e\u307e\u307e\u6b8b\u308a\u3001\u5168\u89d2\u6570\u5b57\u306f\u65e2\u306b\u534a\u89d2\u5316\u6e08\u307f\u3067\u3042\u308b\u3002
+	// 長音記号の数字隣接判定は写像後の値で行う。mapRune は「ー」を変えない
+	// ため写像後も位置はそのまま残り、全角数字は既に半角化済みである。
 	for i, r := range rs {
 		if r != prolongedSoundMark {
 			continue
