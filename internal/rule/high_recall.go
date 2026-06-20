@@ -5,6 +5,7 @@ package rule
 var highRecallRuleIDs = []string{
 	"jp-address-high-recall",
 	"person-name-high-recall",
+	"person-name-structured",
 }
 
 // HighRecallRuleIDs は高再現率モード対象ルール ID の一覧を返す。

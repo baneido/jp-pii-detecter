@@ -156,7 +156,8 @@ min_confidence = "medium"
 [rules]
 # 無効化するルール ID（`jp-pii-detect rules` で一覧表示）
 disabled = ["person-name"]
-# 都道府県なし住所・担当者/敬称アンカー付き氏名など、偽陽性リスクの高い追加ルールを有効化
+# 都道府県なし住所・担当者/敬称アンカー付き氏名・ラベルと値が別行の氏名（フォーム形式）など、
+# 偽陽性リスクの高い追加ルールを有効化
 high_recall = false
 
 [allowlist]

@@ -437,6 +437,16 @@ func Builtin() []Rule {
 			},
 		},
 		{
+			ID:          "person-name-structured",
+			Description: "氏名（構造化・ラベルと値が別行・高再現率）",
+			Prefilter:   PrefilterCJK,
+			// このルールは単一行パターンを持たない。フォーム形式で氏名ラベルと値が
+			// 別の行に分かれるケース（氏名:\n山田太郎 等）を、detect.ScanContent の
+			// クロスライン走査（scanCrossLineNames）が CrossLineNameLabelRe /
+			// CrossLineNameValueRe / ValidCrossLineName を使って検出する。
+			// 高再現率モードでのみ有効（HighRecallRuleIDs）。
+		},
+		{
 			ID:          "jp-birthdate",
 			Description: "生年月日（ラベル付き）",
 			Prefilter:   PrefilterDigit,
