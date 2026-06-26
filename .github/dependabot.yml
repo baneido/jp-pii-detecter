@@ -25,7 +25,7 @@ updates:
     # 公開直後の不安定／汚染されたバージョンを即座に取り込まないための待機期間。
     # サプライチェーン攻撃（リリース直後の改ざん版公開）への緩衝材になる。
     cooldown:
-      default-days: 5
+      default-days: 7
       semver-major-days: 14
     groups:
       # minor / patch はまとめて 1 つの PR にしてレビュー負荷とノイズを下げる。
@@ -56,7 +56,7 @@ updates:
       prefix: ci
       include: scope
     cooldown:
-      default-days: 5
+      default-days: 7
     groups:
       github-actions:
         applies-to: version-updates

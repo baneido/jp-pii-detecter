@@ -9,15 +9,36 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# GITHUB_TOKEN は読み取りのみ。id-token は GCP Workload Identity Federation（OIDC）に必要。
+# workflow 全体では読み取りのみ。OIDC は必要な job だけに付与する。
 permissions:
   contents: read
-  id-token: write
 
 jobs:
+  zizmor:
+    name: zizmor
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Run zizmor
+        uses: zizmorcore/zizmor-action@192e21d79ab29983730a13d1382995c2307fbcaa # v0.5.7
+        with:
+          # zizmor-action v0.5.7 maps 1.25.2 to a pinned GHCR image digest.
+          version: 1.25.2
+          inputs: .
+          online-audits: false
+          advanced-security: false
+          annotations: true
+
   test:
     name: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # GCP Workload Identity Federation（OIDC）に必要
     env:
       # 信頼できる実行か（push か同一リポジトリの PR）。fork からの PR では false。
       # fork PR には実在しうる PII を含むフィクスチャを取得させない（OIDC トークン悪用の防止）。

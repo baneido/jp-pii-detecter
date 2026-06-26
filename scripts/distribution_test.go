@@ -232,8 +232,124 @@ func TestActionUsesPrebuiltBinaryInstaller(t *testing.T) {
 			t.Fatalf("action.yml should not require Go toolchain; found %q", forbidden)
 		}
 	}
-	if !strings.Contains(text, "scripts/install.sh") || !strings.Contains(text, "jp-pii-detect ${{ inputs.args }}") {
+	if !strings.Contains(text, "scripts/install.sh") || !strings.Contains(text, "INPUT_ARGS: ${{ inputs.args }}") {
 		t.Fatalf("action.yml should install a release binary and run it:\n%s", text)
+	}
+}
+
+func TestActionAvoidsShellExpansionOfInputs(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), "action.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, forbidden := range []string{
+		"--version \"${{ inputs.version }}\"",
+		"jp-pii-detect ${{ inputs.args }}",
+		"GITHUB_PATH",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("action.yml should not contain %q:\n%s", forbidden, text)
+		}
+	}
+	for _, want := range []string{
+		"INPUT_VERSION: ${{ inputs.version }}",
+		"INPUT_ARGS: ${{ inputs.args }}",
+		"shlex.split(os.environ[\"INPUT_ARGS\"])",
+		"subprocess.run([scanner, *args], check=True)",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("action.yml missing shell-injection guard %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestCIWorkflowRunsZizmor(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, forbidden := range []string{
+		"pipx run",
+		"--spec zizmor==",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("ci workflow should not install zizmor from PyPI at runtime; found %q:\n%s", forbidden, text)
+		}
+	}
+	for _, want := range []string{
+		"name: zizmor",
+		"uses: zizmorcore/zizmor-action@192e21d79ab29983730a13d1382995c2307fbcaa # v0.5.7",
+		"version: 1.25.2",
+		"online-audits: false",
+		"advanced-security: false",
+		"annotations: true",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("ci workflow should run zizmor; missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestCIWorkflowPinsGoogleActionsAndAvoidsFixtureTemplateInjection(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, forbidden := range []string{
+		"google-github-actions/auth@v2",
+		"google-github-actions/setup-gcloud@v2",
+		`gs://${{ vars.JP_PII_FIXTURES_BUCKET }}/pii-fixtures.json`,
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("ci workflow should not contain %q:\n%s", forbidden, text)
+		}
+	}
+	for _, want := range []string{
+		"google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2",
+		"google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2",
+		"FIXTURES_BUCKET: ${{ vars.JP_PII_FIXTURES_BUCKET }}",
+		`gs://$FIXTURES_BUCKET/pii-fixtures.json`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("ci workflow missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestCIWorkflowScopesOIDCPermissionToTestJob(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	topPermissions := strings.Split(text, "jobs:")[0]
+	if strings.Contains(topPermissions, "id-token: write") {
+		t.Fatalf("ci workflow should not grant id-token at workflow scope:\n%s", text)
+	}
+	testJobStart := strings.Index(text, "  test:")
+	if testJobStart == -1 {
+		t.Fatalf("ci workflow missing test job:\n%s", text)
+	}
+	testJob := text[testJobStart:]
+	if !strings.Contains(testJob, "id-token: write") {
+		t.Fatalf("test job should grant id-token for GCP Workload Identity:\n%s", text)
+	}
+}
+
+func TestDependabotCooldownIsAtLeastSevenDays(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), ".github", "dependabot.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if strings.Contains(text, "default-days: 5") {
+		t.Fatalf("Dependabot cooldown default-days should be at least 7:\n%s", text)
+	}
+	if got := strings.Count(text, "default-days: 7"); got != 2 {
+		t.Fatalf("Dependabot cooldown should configure two default-days: 7 entries, got %d:\n%s", got, text)
 	}
 }
 
