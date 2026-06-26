@@ -92,6 +92,14 @@ func TestNumericEntitiesInsideASCIIIdentifiersExcluded(t *testing.T) {
 	}
 }
 
+func TestPhoneNumberAdjacentToASCIILeftLabelIsDetected(t *testing.T) {
+	d := newDetector(t, "")
+	phone := "090" + "1234" + "5678"
+
+	assertRules(t, d.ScanLine("f.txt", 1, "smartphone"+phone), "jp-phone-number")
+	assertRules(t, d.ScanLine("f.txt", 1, "id: tokenA"+phone+"Z"))
+}
+
 func TestPhoneRule(t *testing.T) {
 	piifixtures.Require(t)
 	d := newDetector(t, "")
