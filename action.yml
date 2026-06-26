@@ -16,12 +16,27 @@ runs:
   using: composite
   steps:
     - id: install
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
       run: |
         install_dir="${RUNNER_TEMP}/jp-pii-detect/bin"
         "$GITHUB_ACTION_PATH/scripts/install.sh" \
-          --version "${{ inputs.version }}" \
+          --version "$INPUT_VERSION" \
           --install-dir "$install_dir"
-        echo "$install_dir" >> "$GITHUB_PATH"
       shell: bash
-    - run: jp-pii-detect ${{ inputs.args }}
+    - env:
+        INPUT_ARGS: ${{ inputs.args }}
+      run: |
+        python3 - <<'PY'
+        import os
+        import shlex
+        import subprocess
+
+        scanner = os.path.join(os.environ["RUNNER_TEMP"], "jp-pii-detect", "bin", "jp-pii-detect")
+        if os.name == "nt":
+            scanner += ".exe"
+
+        args = shlex.split(os.environ["INPUT_ARGS"])
+        subprocess.run([scanner, *args], check=True)
+        PY
       shell: bash
