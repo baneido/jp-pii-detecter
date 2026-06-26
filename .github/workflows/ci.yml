@@ -19,9 +19,6 @@ jobs:
     name: test
     runs-on: ubuntu-latest
     env:
-      # 評価データセット/テストフィクスチャのローカルパス。
-      # 取得できなければ eval 系・PII フィクスチャ依存テストは t.Skip される。
-      JP_PII_FIXTURES: ${{ runner.temp }}/pii-fixtures.json
       # 信頼できる実行か（push か同一リポジトリの PR）。fork からの PR では false。
       # fork PR には実在しうる PII を含むフィクスチャを取得させない（OIDC トークン悪用の防止）。
       TRUSTED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
@@ -37,19 +34,29 @@ jobs:
       # 実在しうる PII を含む評価データセット/フィクスチャを GCS から取得する。
       # 取得は「信頼できる実行（push / 同一リポジトリ PR）」かつリポジトリ変数が設定された場合のみ。
       # fork からの PR では TRUSTED=false のため取得せず、後続の PR 側コードがフィクスチャを読めない。
-      # TODO: google-github-actions/* もコミット SHA でピン留めする（他の action と同様）。
       - name: Authenticate to Google Cloud (OIDC / Workload Identity)
         if: ${{ env.TRUSTED == 'true' && vars.JP_PII_FIXTURES_PROVIDER != '' }}
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
           workload_identity_provider: ${{ vars.JP_PII_FIXTURES_PROVIDER }}
           service_account: ${{ vars.JP_PII_FIXTURES_SA }}
       - name: Set up gcloud
         if: ${{ env.TRUSTED == 'true' && vars.JP_PII_FIXTURES_PROVIDER != '' }}
-        uses: google-github-actions/setup-gcloud@v2
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
       - name: Download PII fixtures from GCS
         if: ${{ env.TRUSTED == 'true' && vars.JP_PII_FIXTURES_PROVIDER != '' }}
-        run: gcloud storage cp "gs://${{ vars.JP_PII_FIXTURES_BUCKET }}/pii-fixtures.json" "$JP_PII_FIXTURES"
+        env:
+          FIXTURES_BUCKET: ${{ vars.JP_PII_FIXTURES_BUCKET }}
+        run: |
+          set -eu
+          # runner コンテキストは job-level env では使えないため、shell 側の
+          # $RUNNER_TEMP と GITHUB_ENV で後続ステップへ渡す。
+          dest="$RUNNER_TEMP/pii-fixtures.json"
+          gcloud storage cp "gs://$FIXTURES_BUCKET/pii-fixtures.json" "$dest"
+          echo "JP_PII_FIXTURES=$dest" >> "$GITHUB_ENV"
+      - name: Remove Google Cloud credentials file
+        if: ${{ env.TRUSTED == 'true' && vars.JP_PII_FIXTURES_PROVIDER != '' }}
+        run: rm -f "${GOOGLE_GHA_CREDS_PATH:-}"
 
       # 信頼できる実行ではフィクスチャ取得を必須にし、回帰ガード（精度・バッジ・検出器テスト）が
       # 取得失敗で黙って Skip されないよう fail-fast する。fork PR では Skip のままでよい。

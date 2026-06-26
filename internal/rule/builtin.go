@@ -25,6 +25,14 @@ func dgNoAlnum(core string) *regexp.Regexp {
 	return regexp.MustCompile(`(?:^|[^0-9A-Za-z])(` + core + `)(?:[^0-9A-Za-z]|$)`)
 }
 
+// dgNoDigitBeforeNoAlnumAfter は左側は数字連結だけを除外し、右側は ASCII
+// 英数字連結を除外する。電話番号のように ASCII ラベル直後へ値が続く
+// "smartphone090..." は拾いつつ、"tokenA090...Z" のような英数字トークン内部は
+// 除外するために使う。
+func dgNoDigitBeforeNoAlnumAfter(core string) *regexp.Regexp {
+	return regexp.MustCompile(`(?:^|[^0-9])(` + core + `)(?:[^0-9A-Za-z]|$)`)
+}
+
 // dgNoAlnumHyphen は英数字とハイフンで連結されたトークンの内部を除外する。
 // UUID のようなハイフン区切り識別子の一部を、番号として切り出さないために使う。
 func dgNoAlnumHyphen(core string) *regexp.Regexp {
@@ -220,13 +228,13 @@ func Builtin() []Rule {
 			Validate:    validPhone,
 			Patterns: []Pattern{
 				// 区切りあり携帯・IP 電話（060/070/080/090/050）
-				{Re: dgNoAlnum(`0[5-9]0-\d{4}-\d{4}`), Base: High},
+				{Re: dgNoDigitBeforeNoAlnumAfter(`0[5-9]0-\d{4}-\d{4}`), Base: High},
 				// 区切りなし携帯・IP 電話
-				{Re: dgNoAlnum(`0[5-9]0\d{8}`), Base: Medium},
+				{Re: dgNoDigitBeforeNoAlnumAfter(`0[5-9]0\d{8}`), Base: Medium},
 				// 区切りあり固定電話（市外局番 2〜5 桁）
-				{Re: dgNoAlnum(`0\d{1,4}-\d{1,4}-\d{4}`), Base: Medium},
+				{Re: dgNoDigitBeforeNoAlnumAfter(`0\d{1,4}-\d{1,4}-\d{4}`), Base: Medium},
 				// 国際表記 +81
-				{Re: dgNoAlnum(`\+81[- ]?\d{1,4}[- ]?\d{1,4}[- ]?\d{3,4}`), Base: High},
+				{Re: dgNoDigitBeforeNoAlnumAfter(`\+81[- ]?\d{1,4}[- ]?\d{1,4}[- ]?\d{3,4}`), Base: High},
 			},
 		},
 		{

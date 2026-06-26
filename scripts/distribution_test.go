@@ -278,6 +278,98 @@ func TestReleaseWorkflowPublishesPrebuiltAssets(t *testing.T) {
 	}
 }
 
+func TestGitHubWorkflowActionsArePinnedToCommitSHA(t *testing.T) {
+	workflows, err := filepath.Glob(filepath.Join(repoRoot(t), ".github", "workflows", "*.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(workflows) == 0 {
+		t.Fatal("no GitHub workflow files found")
+	}
+	for _, workflow := range workflows {
+		data, err := os.ReadFile(workflow)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.Split(string(data), "\n")
+		for i, line := range lines {
+			ref, ok := workflowUseRef(line)
+			if !ok {
+				continue
+			}
+			if !isCommitSHA(ref) {
+				t.Fatalf("%s:%d uses action ref %q; repository policy requires commit SHA pinning", workflow, i+1, ref)
+			}
+		}
+	}
+}
+
+func TestCIWorkflowDoesNotUseRunnerContextInJobEnv(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if strings.Contains(text, "${{ runner.") {
+		t.Fatalf("ci workflow should not use runner context in workflow expressions; set runtime paths via $RUNNER_TEMP and $GITHUB_ENV")
+	}
+	for _, want := range []string{
+		`dest="$RUNNER_TEMP/pii-fixtures.json"`,
+		`echo "JP_PII_FIXTURES=$dest" >> "$GITHUB_ENV"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("ci workflow should propagate fixture path with %q", want)
+		}
+	}
+}
+
+func TestCIWorkflowRemovesGeneratedGoogleCredentialsBeforeDogfooding(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"name: Remove Google Cloud credentials file",
+		`rm -f "${GOOGLE_GHA_CREDS_PATH:-}"`,
+		"./jp-pii-detect scan --format github .",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("ci workflow missing %q", want)
+		}
+	}
+	if strings.Index(text, "Remove Google Cloud credentials file") > strings.Index(text, "./jp-pii-detect scan --format github .") {
+		t.Fatalf("ci workflow should remove generated credentials before dogfooding scan")
+	}
+}
+
+func workflowUseRef(line string) (string, bool) {
+	line = strings.TrimSpace(line)
+	if strings.HasPrefix(line, "#") || !strings.HasPrefix(line, "uses:") {
+		return "", false
+	}
+	value := strings.TrimSpace(strings.TrimPrefix(line, "uses:"))
+	if strings.HasPrefix(value, "./") || strings.HasPrefix(value, ".github/") {
+		return "", false
+	}
+	action, _, _ := strings.Cut(value, "#")
+	action = strings.TrimSpace(action)
+	_, ref, _ := strings.Cut(action, "@")
+	return ref, true
+}
+
+func isCommitSHA(ref string) bool {
+	if len(ref) != 40 {
+		return false
+	}
+	for _, r := range ref {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 func TestReadmeDocumentsTagPinnedInstaller(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(repoRoot(t), "README.md"))
 	if err != nil {
