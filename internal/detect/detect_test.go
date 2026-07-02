@@ -1292,6 +1292,17 @@ cooccurrence_boost = true
 	}
 }
 
+func TestCooccurrenceBoostIgnoresCrossLineNegativeAnchor(t *testing.T) {
+	d := newDetector(t, `
+min_confidence = "medium"
+
+[rules]
+cooccurrence_boost = true
+`)
+	content := "氏名: 田中太郎\n免許証番号: 123456789012\n円"
+	assertRules(t, d.ScanContent("f.txt", content))
+}
+
 // TestCooccurrenceBoostDisabledByDefault は opt-in していない既定設定では、
 // 氏名+電話が近接していても氏名が既定どおり非表示のままであることを確認する
 // （README.md:44「氏名のような誤検出が出やすい項目は既定では報告しない」を

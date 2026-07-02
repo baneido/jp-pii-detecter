@@ -164,20 +164,28 @@ func (d *Detector) ScanContent(file, content string) []Finding {
 	if d.crossLineName != nil {
 		candidates = append(candidates, d.scanCrossLineNames(file, lines)...)
 	}
+
+	// 隣接行の負コンテキスト（金額・数量・連番 ID 等）で抑制される候補は、
+	// cooccurrence_boost のアンカーにも昇格対象にも使わない。
+	filtered := candidates[:0]
+	for _, f := range candidates {
+		if d.hasCrossLineNegativeContext(f, lines, f.Line-1) {
+			continue
+		}
+		filtered = append(filtered, f)
+	}
+	candidates = filtered
+
 	if d.cooccurrenceBoost {
 		candidates = d.applyCooccurrenceBoost(candidates)
 	}
 
-	// 隣接行の負コンテキスト（金額・数量・連番 ID 等）で抑制してから重複解決する。
 	// Confidence < minConf のふるい落としをここでも行う（cooccurrence_boost 無効時は
 	// scanLineNoIgnoreWithContext 内で既に minConf 未満が除かれているため無害な
 	// 二重チェック。有効時は、昇格しなかった保持済み Low 候補をここで最終的に除く）。
-	filtered := candidates[:0]
+	filtered = candidates[:0]
 	for _, f := range candidates {
 		if f.Confidence < d.minConf {
-			continue
-		}
-		if d.hasCrossLineNegativeContext(f, lines, f.Line-1) {
 			continue
 		}
 		filtered = append(filtered, f)
