@@ -53,6 +53,13 @@ type DiffLine struct {
 // 追加行だけを評価する ScanDiffHunk に対応する。Want は、そのケースで検出されるべき
 // ルール ID の集合（空なら「何も検出されないべき」陰性ケース）。File は
 // ソースコード文脈などファイル名依存の挙動を評価したい場合だけ指定する。
+//
+// Tags はケース単位の層化用メタデータ（例: "probe-fn:mynumber-space-separated" /
+// "probe-fp:creditcard-wellknown-test-visa-1" / "known-limitation"）。Span.Tags は
+// 検出範囲（rule_id 必須）単位のタグで、Want:[] の陰性ケース（FP プローブ等、
+// 検出されるべき rule_id が存在しない）には付けられない。ケース全体に対する
+// タグ付けが必要な陰性ケースは、この Case.Tags を使う（省略時は後方互換で
+// タグなし扱いになり、既存データセットに影響しない）。
 type Case struct {
 	File    string     `json:"file,omitempty"`
 	Line    string     `json:"line,omitempty"`
@@ -60,6 +67,7 @@ type Case struct {
 	Diff    []DiffLine `json:"diff,omitempty"`
 	Want    []string   `json:"want,omitempty"`
 	Spans   []Span     `json:"spans,omitempty"`
+	Tags    []string   `json:"tags,omitempty"`
 }
 
 type data struct {
