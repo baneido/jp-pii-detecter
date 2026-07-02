@@ -12,10 +12,11 @@ import (
 )
 
 // dg は数字エンティティ用の境界ガード付きパターンを生成する。
-// 前後が数字でないことを保証する（RE2 は lookaround 非対応のため
-// キャプチャグループで切り出す）。
+// 前後が数字でないこと、かつ直後の区切り文字が数字トークンの続きで
+// ないことを保証する（RE2 は lookaround 非対応のためキャプチャグループで
+// 切り出す）。
 func dg(core string) *regexp.Regexp {
-	return regexp.MustCompile(`(?:^|[^0-9])(` + core + `)(?:[^0-9]|$)`)
+	return regexp.MustCompile(digitLeftBoundary + `(` + core + `)` + digitRightBoundary)
 }
 
 // dgNoAlnum は dg と同じ境界ガードに加え、前後の ASCII 英字も除外する。
@@ -30,13 +31,13 @@ func dgNoAlnum(core string) *regexp.Regexp {
 // "smartphone090..." は拾いつつ、UUID のようなハイフン区切りトークン内部は
 // 除外するために使う。
 func dgNoDigitBeforeNoAlnumHyphenAfter(core string) *regexp.Regexp {
-	return regexp.MustCompile(`(?:^|[^0-9])(` + core + `)(?:[^0-9A-Za-z-]|$)`)
+	return regexp.MustCompile(digitLeftBoundary + `(` + core + `)` + noAlnumHyphenRightBoundary)
 }
 
 // dgNoAlnumHyphen は英数字とハイフンで連結されたトークンの内部を除外する。
 // UUID のようなハイフン区切り識別子の一部を、番号として切り出さないために使う。
 func dgNoAlnumHyphen(core string) *regexp.Regexp {
-	return regexp.MustCompile(`(?:^|[^0-9A-Za-z-])(` + core + `)(?:[^0-9A-Za-z-]|$)`)
+	return regexp.MustCompile(noAlnumHyphenLeftBoundary + `(` + core + `)` + noAlnumHyphenRightBoundary)
 }
 
 // dgNoSlash は dg と同じ境界ガードに加え、直前のスラッシュも除外する。
@@ -49,13 +50,25 @@ func dgNoSlash(core string) *regexp.Regexp {
 // dgNoSlashAlnumHyphen は dgNoSlash と dgNoAlnumHyphen を組み合わせた
 // 境界ガード。URL パス直後の数字列と、英数字・ハイフン連結トークン内部を除外する。
 func dgNoSlashAlnumHyphen(core string) *regexp.Regexp {
-	return regexp.MustCompile(`(?:^|[^0-9A-Za-z/-])(` + core + `)(?:[^0-9A-Za-z-]|$)`)
+	return regexp.MustCompile(noSlashAlnumHyphenLeftBoundary + `(` + core + `)` + noAlnumHyphenRightBoundary)
 }
 
 // ag は英数字エンティティ用の境界ガード付きパターンを生成する。
 func ag(core string) *regexp.Regexp {
-	return regexp.MustCompile(`(?:^|[^0-9A-Za-z])(` + core + `)(?:[^0-9A-Za-z]|$)`)
+	return regexp.MustCompile(`(?:^|[^0-9A-Za-z])(` + core + `)` + alnumRightBoundary)
 }
+
+const (
+	// boundary は RE2 に lookaround がないため、必要に応じて区切り文字
+	// 1 文字と隣接する非数字までを境界として消費する。番号本体は各 helper
+	// の capture group 1 に残るため、検出対象の範囲は変わらない。
+	digitLeftBoundary              = `(?:^|[^0-9 .-]|(?:^|[^0-9])[ .-])`
+	digitRightBoundary             = `(?:$|[ .-]$|[ .-][^0-9]|[^0-9 .-])`
+	noAlnumHyphenLeftBoundary      = `(?:^|[^0-9A-Za-z .-]|(?:^|[^0-9])[ .])`
+	noAlnumHyphenRightBoundary     = `(?:$|[ .]$|[ .][^0-9]|[^0-9A-Za-z .-])`
+	noSlashAlnumHyphenLeftBoundary = `(?:^|[^0-9A-Za-z/ .-]|(?:^|[^0-9/])[ .])`
+	alnumRightBoundary             = `(?:$|[ .-]$|[ .-][^0-9]|[^0-9A-Za-z .-])`
+)
 
 // stripSeparators は番号表記の区切り文字（ハイフン・半角スペース・ドット・
 // 丸括弧）を除去する。マイナンバー・クレジットカードの呼び出しはこれらの
@@ -224,7 +237,7 @@ func Builtin() []Rule {
 				{Re: dgNoAlnumHyphen(`\d{12}`), Base: Medium},
 				// 前後にハイフンが続く場合はクレジットカード等の
 				// 4-4-4-4 グループの一部とみなして除外する。
-				{Re: regexp.MustCompile(`(?:^|[^0-9A-Za-z-])(\d{4}-\d{4}-\d{4})(?:[^0-9A-Za-z-]|$)`), Base: Medium},
+				{Re: dgNoAlnumHyphen(`\d{4}-\d{4}-\d{4}`), Base: Medium},
 				// 空白区切り（4-4-4 / 6-6）。stripSeparators は元々半角スペースを
 				// 除去するため Validate 側の変更は不要。
 				{Re: dgNoAlnumHyphen(`\d{4} \d{4} \d{4}`), Base: Medium},

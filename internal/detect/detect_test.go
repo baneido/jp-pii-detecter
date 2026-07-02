@@ -103,6 +103,23 @@ func TestMyNumberSeparatorVariants(t *testing.T) {
 	}
 }
 
+func TestNumericSeparatorVariantsRejectLongTokenPrefixes(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+	}{
+		{"空白区切りマイナンバーの直後にさらに空白数字が続く", "マイナンバー: 1234 5678 9018 0000"},
+		{"空白区切り基礎年金番号の直後にさらに空白数字が続く", "基礎年金番号: 1234 567890 1"},
+		{"空白区切りパスポート番号の直後にさらに空白数字が続く", "パスポート番号: AB 1234567 8"},
+		{"ドット区切り電話番号の直後にさらにドット数字が続く", "電話番号: 090.1234.5678.9"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line))
+		})
+	}
+}
+
 func TestNumericEntitiesInsideASCIIIdentifiersExcluded(t *testing.T) {
 	d := newDetector(t, "")
 	tests := []struct {
