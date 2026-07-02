@@ -12,10 +12,11 @@ import (
 )
 
 // dg は数字エンティティ用の境界ガード付きパターンを生成する。
-// 前後が数字でないことを保証する（RE2 は lookaround 非対応のため
-// キャプチャグループで切り出す）。
+// 前後が数字でないこと、かつ直後の区切り文字が数字トークンの続きで
+// ないことを保証する（RE2 は lookaround 非対応のためキャプチャグループで
+// 切り出す）。
 func dg(core string) *regexp.Regexp {
-	return regexp.MustCompile(`(?:^|[^0-9])(` + core + `)(?:[^0-9]|$)`)
+	return regexp.MustCompile(digitLeftBoundary + `(` + core + `)` + digitRightBoundary)
 }
 
 // dgNoAlnum は dg と同じ境界ガードに加え、前後の ASCII 英字も除外する。
@@ -30,13 +31,13 @@ func dgNoAlnum(core string) *regexp.Regexp {
 // "smartphone090..." は拾いつつ、UUID のようなハイフン区切りトークン内部は
 // 除外するために使う。
 func dgNoDigitBeforeNoAlnumHyphenAfter(core string) *regexp.Regexp {
-	return regexp.MustCompile(`(?:^|[^0-9])(` + core + `)(?:[^0-9A-Za-z-]|$)`)
+	return regexp.MustCompile(digitLeftBoundary + `(` + core + `)` + noAlnumHyphenRightBoundary)
 }
 
 // dgNoAlnumHyphen は英数字とハイフンで連結されたトークンの内部を除外する。
 // UUID のようなハイフン区切り識別子の一部を、番号として切り出さないために使う。
 func dgNoAlnumHyphen(core string) *regexp.Regexp {
-	return regexp.MustCompile(`(?:^|[^0-9A-Za-z-])(` + core + `)(?:[^0-9A-Za-z-]|$)`)
+	return regexp.MustCompile(noAlnumHyphenLeftBoundary + `(` + core + `)` + noAlnumHyphenRightBoundary)
 }
 
 // dgNoSlash は dg と同じ境界ガードに加え、直前のスラッシュも除外する。
@@ -49,17 +50,36 @@ func dgNoSlash(core string) *regexp.Regexp {
 // dgNoSlashAlnumHyphen は dgNoSlash と dgNoAlnumHyphen を組み合わせた
 // 境界ガード。URL パス直後の数字列と、英数字・ハイフン連結トークン内部を除外する。
 func dgNoSlashAlnumHyphen(core string) *regexp.Regexp {
-	return regexp.MustCompile(`(?:^|[^0-9A-Za-z/-])(` + core + `)(?:[^0-9A-Za-z-]|$)`)
+	return regexp.MustCompile(noSlashAlnumHyphenLeftBoundary + `(` + core + `)` + noAlnumHyphenRightBoundary)
 }
 
 // ag は英数字エンティティ用の境界ガード付きパターンを生成する。
 func ag(core string) *regexp.Regexp {
-	return regexp.MustCompile(`(?:^|[^0-9A-Za-z])(` + core + `)(?:[^0-9A-Za-z]|$)`)
+	return regexp.MustCompile(`(?:^|[^0-9A-Za-z])(` + core + `)` + alnumRightBoundary)
 }
 
+const (
+	// boundary は RE2 に lookaround がないため、必要に応じて区切り文字
+	// 1 文字と隣接する非数字までを境界として消費する。番号本体は各 helper
+	// の capture group 1 に残るため、検出対象の範囲は変わらない。
+	digitLeftBoundary              = `(?:^|[^0-9 .-]|(?:^|[^0-9])[ .-])`
+	digitRightBoundary             = `(?:$|[ .-]$|[ .-][^0-9]|[^0-9 .-])`
+	noAlnumHyphenLeftBoundary      = `(?:^|[^0-9A-Za-z .-]|(?:^|[^0-9])[ .])`
+	noAlnumHyphenRightBoundary     = `(?:$|[ .]$|[ .][^0-9]|[^0-9A-Za-z .-])`
+	noSlashAlnumHyphenLeftBoundary = `(?:^|[^0-9A-Za-z/ .-]|(?:^|[^0-9/])[ .])`
+	alnumRightBoundary             = `(?:$|[ .-]$|[ .-][^0-9]|[^0-9A-Za-z .-])`
+)
+
+// stripSeparators は番号表記の区切り文字（ハイフン・半角スペース・ドット・
+// 丸括弧）を除去する。マイナンバー・クレジットカードの呼び出しはこれらの
+// 区切り文字を元々捕捉しない（正規表現側にハイフン・空白しか含まない）ため、
+// ドット・丸括弧の追加は無効化に影響しない。電話番号（括弧市外局番・
+// ドット区切り携帯）と運転免許（ハイフン区切り 4-4-4）の新パターンが
+// この拡張に依存する。
 func stripSeparators(s string) string {
 	return strings.Map(func(r rune) rune {
-		if r == '-' || r == ' ' {
+		switch r {
+		case '-', ' ', '.', '(', ')':
 			return -1
 		}
 		return r
@@ -217,7 +237,11 @@ func Builtin() []Rule {
 				{Re: dgNoAlnumHyphen(`\d{12}`), Base: Medium},
 				// 前後にハイフンが続く場合はクレジットカード等の
 				// 4-4-4-4 グループの一部とみなして除外する。
-				{Re: regexp.MustCompile(`(?:^|[^0-9A-Za-z-])(\d{4}-\d{4}-\d{4})(?:[^0-9A-Za-z-]|$)`), Base: Medium},
+				{Re: dgNoAlnumHyphen(`\d{4}-\d{4}-\d{4}`), Base: Medium},
+				// 空白区切り（4-4-4 / 6-6）。stripSeparators は元々半角スペースを
+				// 除去するため Validate 側の変更は不要。
+				{Re: dgNoAlnumHyphen(`\d{4} \d{4} \d{4}`), Base: Medium},
+				{Re: dgNoAlnumHyphen(`\d{6} \d{6}`), Base: Medium},
 			},
 		},
 		{
@@ -225,14 +249,29 @@ func Builtin() []Rule {
 			Description: "電話番号（携帯・固定・IP・国際表記）",
 			Prefilter:   PrefilterDigit,
 			Context:     []string{"電話", "携帯", "連絡先", "tel", "phone", "fax", "mobile", "denwa"},
-			Validate:    validPhone,
+			// RequireContextWindow は区切りなし固定電話パターン（RequireContext:
+			// true）にのみ適用される。既存の RequireContext なしパターンの昇格判定は
+			// 行全体を見るため（detect.ctxForMatch の useWindow=false 経路）、
+			// 挙動は変わらない。
+			RequireContextWindow: digitRuleRequireContextWindow,
+			Validate:             validPhone,
 			Patterns: []Pattern{
 				// 区切りあり携帯・IP 電話（060/070/080/090/050）
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0-\d{4}-\d{4}`), Base: High},
+				// 空白・ドット区切り携帯・IP 電話
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0[ .]\d{4}[ .]\d{4}`), Base: Medium},
 				// 区切りなし携帯・IP 電話
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0[5-9]0\d{8}`), Base: Medium},
-				// 区切りあり固定電話（市外局番 2〜5 桁）
-				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}-\d{1,4}-\d{4}`), Base: Medium},
+				// 区切りあり固定電話（市外局番 2〜5 桁）。末尾は 3〜4 桁を許容し、
+				// フリーダイヤル・ナビダイヤル等の末尾 3 桁表記も拾う。
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}-\d{1,4}-\d{3,4}`), Base: Medium},
+				// 括弧市外局番（市外局番の直後に市内局番を括弧書き、または
+				// 市外局番全体を括弧で囲む表記）。
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{1,4}\(\d{1,4}\)\d{4}`), Base: Medium},
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`\(0\d{1,4}\)\s?\d{1,4}-?\d{4}`), Base: Medium},
+				// 区切りなし固定電話（10 桁連続）。区切りがないため図面番号・型番等との
+				// 衝突が携帯・IP 電話より大きく、コンテキスト必須で Medium に留める。
+				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`0\d{9}`), Base: Medium, RequireContext: true},
 				// 国際表記 +81
 				{Re: dgNoDigitBeforeNoAlnumHyphenAfter(`\+81[- ]?\d{1,4}[- ]?\d{1,4}[- ]?\d{3,4}`), Base: High},
 			},
@@ -322,12 +361,21 @@ func Builtin() []Rule {
 			NegativeContext:      digitRuleNegativeContext,
 			RequireContextWindow: digitRuleRequireContextWindow,
 			Validate: func(m string) bool {
+				// ハイフン区切り（4-4-4）はセパレータを除去してから判定する
+				// （区切り文字はチェックディジットではないため、AllSame 判定が
+				// ハイフンに惑わされて "0000-0000-0000" のようなプレースホルダを
+				// 通過させないようにする）。連続 12 桁は元々区切りを含まないため
+				// stripSeparators は無害（no-op）。
 				// 先頭 2 桁は公安委員会コードで 10 以上
 				// （= 先頭桁が 0 でないことと等価）
-				return !checksum.AllSame(m) && m[0] != '0'
+				d := stripSeparators(m)
+				return !checksum.AllSame(d) && d[0] != '0'
 			},
 			Patterns: []Pattern{
 				{Re: dg(`\d{12}`), Base: High, RequireContext: true},
+				// ハイフン区切り（4-4-4）。dgNoAlnumHyphen で UUID 等のハイフン区切り
+				// トークンの内部を除外する（dg ではなく my-number と同じ境界ガード）。
+				{Re: dgNoAlnumHyphen(`\d{4}-\d{4}-\d{4}`), Base: High, RequireContext: true},
 			},
 		},
 		{
@@ -336,7 +384,8 @@ func Builtin() []Rule {
 			Prefilter:   PrefilterDigit,
 			Context:     []string{"パスポート", "旅券", "passport"},
 			Patterns: []Pattern{
-				{Re: ag(`[A-Z]{2}\d{7}`), Base: High, RequireContext: true},
+				// 英字 2 桁と数字 7 桁の間の半角スペースは任意（例: "AB 1234567"）。
+				{Re: ag(`[A-Z]{2} ?\d{7}`), Base: High, RequireContext: true},
 			},
 		},
 		{
@@ -347,7 +396,9 @@ func Builtin() []Rule {
 			NegativeContext:      digitRuleNegativeContext,
 			RequireContextWindow: digitRuleRequireContextWindow,
 			Patterns: []Pattern{
-				{Re: dg(`\d{4}-?\d{6}`), Base: High, RequireContext: true},
+				// ハイフン・半角スペースいずれの区切りも許容する（Validate なしのため
+				// 区切り文字の除去は不要）。
+				{Re: dg(`\d{4}[- ]?\d{6}`), Base: High, RequireContext: true},
 			},
 		},
 		{
