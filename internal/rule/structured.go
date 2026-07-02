@@ -37,6 +37,7 @@ var (
 // （プレースホルダ・組織名も棄却）。辞書未収録の氏名は取りこぼす（高再現率モード
 // 限定の適合率↔再現率トレードオフ）。
 func ValidCrossLineName(v string) bool {
-	v = strings.TrimSpace(v)
+	// 半角カナ由来の濁点・半濁点（結合文字のまま）を辞書照合前に合成する。
+	v = dict.ComposeKana(strings.TrimSpace(v))
 	return notPlaceholderName(v) && notOrgName(v) && dict.IsPersonName(v)
 }
