@@ -138,6 +138,10 @@ func EvaluateCasesWithOptions(cases []Case, opts Options) ([]Result, error) {
 				return nil, fmt.Errorf("invalid span for %s in case %q: line %d [%d,%d)",
 					s.RuleID, caseLabel(c), s.Line, s.Start, s.End)
 			}
+			if s.WantConfidence != "" && !validConfidence(s.WantConfidence) {
+				return nil, fmt.Errorf("invalid want_confidence %q for %s in case %q: want low, medium, or high",
+					s.WantConfidence, s.RuleID, caseLabel(c))
+			}
 			want[s.RuleID] = true
 			at(s.RuleID)
 		}
@@ -249,8 +253,13 @@ func EvaluateCasesWithOptions(cases []Case, opts Options) ([]Result, error) {
 // いずれも "low"|"medium"|"high" の文字列のため、ここでは internal/rule に依存しない）。
 var confidenceRankOrder = map[string]int{"low": 1, "medium": 2, "high": 3}
 
+func validConfidence(s string) bool {
+	_, ok := confidenceRankOrder[s]
+	return ok
+}
+
 // confidenceRank は信頼度文字列の順序値を返す。未知の文字列（空文字含む）は
-// 0 を返し、どの既知信頼度よりも低く扱う。
+// 0 を返す。WantConfidence は評価前に validConfidence で検証する。
 func confidenceRank(s string) int {
 	return confidenceRankOrder[s]
 }

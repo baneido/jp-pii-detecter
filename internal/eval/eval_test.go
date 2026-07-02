@@ -395,8 +395,8 @@ func TestEvaluateCasesWithOptionsEnablesHighRecallRules(t *testing.T) {
 
 func TestEvaluateCasesCountsNegativeCases(t *testing.T) {
 	results, err := EvaluateCases([]Case{
-		{Content: "memo: nothing sensitive on this line"},           // 陰性ケース（Want/Spans なし）
-		{Content: "another clean memo", File: "clean.txt"},           // 陰性ケース
+		{Content: "memo: nothing sensitive on this line"},              // 陰性ケース（Want/Spans なし）
+		{Content: "another clean memo", File: "clean.txt"},             // 陰性ケース
 		{Line: "連絡先: taro@gmail.com", Want: []string{"email-address"}}, // 陽性ケース
 	})
 	if err != nil {
@@ -528,6 +528,26 @@ func TestEvaluateCasesWantConfidenceOptionalWhenUnset(t *testing.T) {
 	r := findResult(t, results, "person-name")
 	if r.ConfidenceMiss != 0 {
 		t.Fatalf("ConfidenceMiss = %d, want 0（WantConfidence 未設定はチェック対象外）", r.ConfidenceMiss)
+	}
+}
+
+func TestEvaluateCasesRejectsUnknownWantConfidence(t *testing.T) {
+	_, err := EvaluateCases([]Case{
+		{
+			Line: "連絡先: taro@gmail.com",
+			Spans: []Span{{
+				RuleID:         "email-address",
+				Start:          5,
+				End:            19,
+				WantConfidence: "hgh",
+			}},
+		},
+	})
+	if err == nil {
+		t.Fatal("EvaluateCases accepted unknown want_confidence")
+	}
+	if !strings.Contains(err.Error(), "want_confidence") || !strings.Contains(err.Error(), "hgh") {
+		t.Fatalf("error = %q, want it to mention want_confidence and the invalid value", err)
 	}
 }
 
