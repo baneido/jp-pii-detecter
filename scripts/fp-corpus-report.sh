@@ -14,9 +14,9 @@
 # 済み）をファイルに保存したものを渡す。本スクリプトは rule_id と件数だけを集計し、
 # マスク済みの match 値すら出力に含めない（生値はもちろん、マスク値も外部に残さない）。
 #
-# MLoC（Million Lines of Code）は <corpus-dir> 配下の全ファイルの物理行数
-# （find <dir> -type f | xargs wc -l 相当）を 1,000,000 で割った値。専用の loc 計測
-# ツールは使わず、単純な物理行数で十分とする（対応方針 (1) 参照）。
+# MLoC（Million Lines of Code）は scanner が走査対象にするファイルの物理行数を
+# 1,000,000 で割った値。専用の loc 計測ツールは使わず、単純な物理行数で十分とする
+# （対応方針 (1) 参照）。
 #
 # 出力: 集計結果の JSON を標準出力へ。
 set -eu
@@ -39,10 +39,34 @@ findings_json=$3
 [ -d "$dir" ] || die "ディレクトリが存在しません: $dir"
 [ -f "$findings_json" ] || die "findings JSON が存在しません: $findings_json"
 
-# 物理行数（.git は除外）。`find | xargs wc -l` はファイル数が 1 件か複数件かで
-# "total" 行の有無が変わり集計を誤りやすいため、全ファイルを cat で連結してから
-# 1 回だけ wc -l する（ファイル数によらず安全）。
-lines=$(find "$dir" -type f -not -path '*/.git/*' -print0 | xargs -0 cat -- 2>/dev/null | wc -l | tr -d ' ')
+scanner_physical_lines() {
+	# internal/source/files.go の skipDirs / MaxFileSize / isBinary に合わせる。
+	find "$1" \
+		\( -type d \( \
+			-name '.git' -o \
+			-name 'node_modules' -o \
+			-name 'vendor' -o \
+			-name '.venv' -o \
+			-name 'venv' -o \
+			-name '__pycache__' -o \
+			-name 'dist' -o \
+			-name 'build' -o \
+			-name '.next' -o \
+			-name 'target' \
+		\) -prune \) -o \
+		\( -type f -size -5242881c -exec sh -c '
+			for path do
+				bytes=$(dd if="$path" bs=8192 count=1 2>/dev/null | wc -c | tr -d " ")
+				non_nul_bytes=$(dd if="$path" bs=8192 count=1 2>/dev/null | tr -d "\000" | wc -c | tr -d " ")
+				if [ "$bytes" = "$non_nul_bytes" ]; then
+					wc -l < "$path"
+				fi
+			done
+		' sh {} + \) |
+		awk '{ sum += $1 } END { print sum + 0 }'
+}
+
+lines=$(scanner_physical_lines "$dir")
 
 jq -n \
 	--arg corpus "$corpus" \

@@ -105,6 +105,58 @@ func TestFPCorpusReportAggregatesByRule(t *testing.T) {
 	}
 }
 
+func TestFPCorpusReportCountsOnlyScannerEligibleFiles(t *testing.T) {
+	corpusDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(corpusDir, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeLines(t, filepath.Join(corpusDir, "src", "a.txt"), 3)
+	writeLines(t, filepath.Join(corpusDir, "src", "b.txt"), 2)
+
+	for _, dir := range []string{
+		".git",
+		"node_modules",
+		"vendor",
+		".venv",
+		"venv",
+		"__pycache__",
+		"dist",
+		"build",
+		".next",
+		"target",
+	} {
+		if err := os.MkdirAll(filepath.Join(corpusDir, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeLines(t, filepath.Join(corpusDir, dir, "ignored.txt"), 7)
+	}
+
+	big := make([]byte, 5*1024*1024+1)
+	for i := range big {
+		big[i] = 'x'
+	}
+	if err := os.WriteFile(filepath.Join(corpusDir, "too-big.txt"), big, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(corpusDir, "binary.bin"), []byte("text before nul\x00\ntext after\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	findingsPath := writeFindingsJSON(t, t.TempDir(), nil)
+	out, code := runScript(t, fpScript, nil, "sample", corpusDir, findingsPath)
+	if code != 0 {
+		t.Fatalf("exit=%d\n%s", code, out)
+	}
+
+	var got fpReport
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, out)
+	}
+	if got.PhysicalLines != 5 {
+		t.Errorf("physical_lines = %d, want scanner-eligible line count 5", got.PhysicalLines)
+	}
+}
+
 func TestFPCorpusReportZeroFindings(t *testing.T) {
 	corpusDir := t.TempDir()
 	writeLines(t, filepath.Join(corpusDir, "a.txt"), 1)
