@@ -341,20 +341,18 @@ func TestSARIFRegionEndpoints(t *testing.T) {
 	}
 }
 
-// TestSARIFPartialFingerprints は partialFingerprints が付与され、行番号が
-// 変わってもルール ID・ファイル・検出値が同じなら同一の値になる（行移動で
-// 同一指摘が新規指摘として再出現しない）こと、および同一ファイル内の重複値は
-// 出現順で異なるフィンガープリントになることを確認する。
+// TestSARIFPartialFingerprints は partialFingerprints が付与され、生の Match 値を
+// 使わずにルール ID・ファイル・位置・同一位置の出現順で安定することを確認する。
 func TestSARIFPartialFingerprints(t *testing.T) {
-	base := detect.Finding{RuleID: "test-rule", Description: "test", File: "a.txt", Column: 1, Match: "ABCDE", Confidence: rule.High}
-	shifted := base
-	shifted.Line = base.Line + 20 // 行が 20 行分ずれた想定
+	base := detect.Finding{RuleID: "test-rule", Description: "test", File: "a.txt", Line: 3, Column: 1, Match: "ABCDE", Confidence: rule.High}
+	sameLocationDifferentValue := base
+	sameLocationDifferentValue.Match = "VWXYZ"
 
 	var buf1, buf2 bytes.Buffer
 	if err := SARIF(&buf1, []detect.Finding{base}, nil, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := SARIF(&buf2, []detect.Finding{shifted}, nil, true); err != nil {
+	if err := SARIF(&buf2, []detect.Finding{sameLocationDifferentValue}, nil, true); err != nil {
 		t.Fatal(err)
 	}
 	var doc1, doc2 sarifDoc
@@ -370,26 +368,42 @@ func TestSARIFPartialFingerprints(t *testing.T) {
 		t.Fatal("partialFingerprints が空")
 	}
 	if fp1 != fp2 {
-		t.Errorf("行番号がずれてもフィンガープリントは同じであるべき: %s != %s", fp1, fp2)
+		t.Errorf("検出値だけが変わってもフィンガープリントは同じであるべき: %s != %s", fp1, fp2)
 	}
 
-	// 同一ファイル内に同じ値が 2 回出現する場合は出現順で別のフィンガープリントになる。
-	dup := []detect.Finding{base, {RuleID: base.RuleID, Description: base.Description, File: base.File, Line: base.Line + 1, Column: 1, Match: base.Match, Confidence: rule.High}}
-	var buf3 bytes.Buffer
-	if err := SARIF(&buf3, dup, nil, true); err != nil {
+	// 位置が変われば別のフィンガープリントになる。
+	moved := base
+	moved.Line++
+	var movedBuf bytes.Buffer
+	if err := SARIF(&movedBuf, []detect.Finding{moved}, nil, true); err != nil {
 		t.Fatal(err)
 	}
-	var doc3 sarifDoc
-	if err := json.Unmarshal(buf3.Bytes(), &doc3); err != nil {
+	var movedDoc sarifDoc
+	if err := json.Unmarshal(movedBuf.Bytes(), &movedDoc); err != nil {
 		t.Fatal(err)
 	}
-	fpA := doc3.Runs[0].Results[0].PartialFingerprints["primaryLocationLineHash"]
-	fpB := doc3.Runs[0].Results[1].PartialFingerprints["primaryLocationLineHash"]
+	fpMoved := movedDoc.Runs[0].Results[0].PartialFingerprints["primaryLocationLineHash"]
+	if fpMoved == fp1 {
+		t.Errorf("位置が変わればフィンガープリントは異なるべき: %s == %s", fpMoved, fp1)
+	}
+
+	// 同一位置に複数件が残った場合は出現順で別のフィンガープリントになる。
+	dup := []detect.Finding{base, sameLocationDifferentValue}
+	var dupBuf bytes.Buffer
+	if err := SARIF(&dupBuf, dup, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	var dupDoc sarifDoc
+	if err := json.Unmarshal(dupBuf.Bytes(), &dupDoc); err != nil {
+		t.Fatal(err)
+	}
+	fpA := dupDoc.Runs[0].Results[0].PartialFingerprints["primaryLocationLineHash"]
+	fpB := dupDoc.Runs[0].Results[1].PartialFingerprints["primaryLocationLineHash"]
 	if fpA == fpB {
-		t.Errorf("同一ファイル内の重複値は異なるフィンガープリントになるべき: %s == %s", fpA, fpB)
+		t.Errorf("同一位置の複数件は異なるフィンガープリントになるべき: %s == %s", fpA, fpB)
 	}
 	if fpA != fp1 {
-		t.Errorf("1 件目の重複値のフィンガープリントは非重複時と一致するべき: %s != %s", fpA, fp1)
+		t.Errorf("同一位置 1 件目のフィンガープリントは単独時と一致するべき: %s != %s", fpA, fp1)
 	}
 }
 

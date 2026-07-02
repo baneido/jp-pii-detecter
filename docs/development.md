@@ -154,8 +154,8 @@ internal/
    検出理由（コンテキスト昇格・検証有無等）を 1 行追加する。`--fail-on` を指定すると、報告閾値
    （`min_confidence`）とは独立に、その信頼度以上の検出があるときだけ終了コードを 1 にできる
    （未指定時は既存どおり報告があれば 1）。SARIF の各 result には `region.endLine`/`endColumn` と、
-   ルール ID・ファイル・検出値ベースの `partialFingerprints`（行番号に依存しないため、周辺行の
-   増減で行がずれても同一指摘として扱われる）を付与する。
+   ルール ID・ファイル・位置・同一位置の出現順ベースの `partialFingerprints` を付与する。
+   `partialFingerprints` には生の検出値を含めず、マスク方針を迂回しない。
 
 ## 検出ルールの追加
 
