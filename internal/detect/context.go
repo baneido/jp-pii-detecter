@@ -1,9 +1,35 @@
 package detect
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/baneido/jp-pii-detector/internal/rule"
+)
 
 func (d *Detector) containsAnyContext(haystack string, kws []string) bool {
 	return len(d.matchingContexts(haystack, kws)) > 0
+}
+
+// matchContextPatterns は rule.ContextPattern（辞書照合が必要な文脈シグナル）を
+// haystack に対して評価し、検証済みの候補文字列を返す。Literals の事前ゲートを
+// 通過したパターンだけ正規表現を評価するため、辞書規模が大きくても
+// 該当しない大半の行はほぼ無コストになる。
+func matchContextPatterns(haystack string, patterns []rule.ContextPattern) []string {
+	var out []string
+	for _, cp := range patterns {
+		if len(cp.Literals) > 0 && !containsAnyLiteral(haystack, cp.Literals) {
+			continue
+		}
+		for _, m := range cp.Re.FindAllStringSubmatch(haystack, -1) {
+			if len(m) < 2 {
+				continue
+			}
+			if cp.Validate == nil || cp.Validate(m[1]) {
+				out = append(out, m[1])
+			}
+		}
+	}
+	return out
 }
 
 func (d *Detector) matchingContexts(haystack string, kws []string) []string {

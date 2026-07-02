@@ -185,6 +185,23 @@ func validNameField(v string, allowSurname, allowGiven bool) bool {
 	return (allowSurname && dict.IsSurname(v)) || (allowGiven && dict.IsGivenName(v))
 }
 
+// bankNameSuffixes は銀行名の業態サフィックス（この語の直前に実在する金融機関名が
+// 続く場合のみ、bankNameCandidateRe が候補として切り出す）。
+var bankNameSuffixes = []string{"銀行", "信用金庫", "信用組合", "信金", "信組", "労働金庫", "ろうきん", "農協"}
+
+// bankNameCandidateRe は「(金融機関名候補)(業態サフィックス)」の形を切り出す
+// アンカー正規表現。キャプチャグループ 1 はサフィックスを含む完全な名称
+// （例: "三菱UFJ銀行"）で、dict.IsBankName に渡してO(1)で実在性を検証する。
+// 数百〜千語規模の辞書を Context の線形走査に混ぜないための専用経路
+// （internal/detect の ContextPattern・bankNameSuffixes の Literals ゲートを参照）。
+var bankNameCandidateRe = regexp.MustCompile(
+	`([` + kanji + hiragana + katakana + `A-Za-z]{1,12}(?:銀行|信用金庫|信用組合|信金|信組|労働金庫|ろうきん|農協))`,
+)
+
+func isYuchoBankName(s string) bool {
+	return s == "ゆうちょ銀行"
+}
+
 // digitRuleNegativeContext は桁ベースのルールを棄却する近傍語
 // （金額・数量・連番 ID など PII でない数字列の文脈）。
 //
@@ -360,14 +377,49 @@ func Builtin() []Rule {
 			},
 		},
 		{
-			ID:                   "jp-bank-account",
-			Description:          "銀行口座番号",
-			Prefilter:            PrefilterDigit,
-			Context:              []string{"口座", "普通預金", "当座預金", "支店番号", "account number", "account_no", "bank account", "kouza"},
+			ID:          "jp-bank-account",
+			Description: "銀行口座番号",
+			Prefilter:   PrefilterDigit,
+			Context:     []string{"口座", "普通預金", "当座預金", "支店番号", "account number", "account_no", "bank account", "kouza"},
+			// 実在の銀行・信用金庫・労働金庫名（"三菱UFJ銀行" 等）を辞書照合で
+			// 検証し、既存の 8 語 Context だけでは拾えない「銀行名＋支店＋
+			// 普通/当座」のような典型的な記載形式（例: [銀行名] 渋谷支店
+			// 普通 [7桁の口座番号]）を検出可能にする。1,100 語規模の辞書を
+			// Context の線形走査に混ぜないため、bankNameSuffixes の安価な
+			// リテラルゲートを通過した行だけ bankNameCandidateRe を評価する
+			// （詳細は internal/dict/bank_names.go・docs/development.md）。
+			// 注: このコメント自体が dogfooding で自己検出されないよう、
+			// 具体的な銀行名・口座番号の実値は書かない。
+			ContextPatterns: []ContextPattern{
+				{Re: bankNameCandidateRe, Validate: dict.IsBankName, Literals: bankNameSuffixes},
+			},
 			NegativeContext:      digitRuleNegativeContext,
 			RequireContextWindow: digitRuleRequireContextWindow,
 			Patterns: []Pattern{
 				{Re: dg(`\d{7}`), Base: Medium, RequireContext: true},
+			},
+		},
+		{
+			ID:          "jp-yucho-account",
+			Description: "ゆうちょ銀行 記号番号",
+			Prefilter:   PrefilterDigit,
+			Context:     []string{"ゆうちょ", "郵便貯金", "記号", "日本郵政", "郵便局", "yucho", "japan post", "japan post bank"},
+			// 銀行名候補の専用経路は「ゆうちょ銀行」表記だけを文脈として使う。
+			// 任意の銀行名は通常の銀行口座ルール（jp-bank-account）側の文脈で扱う。
+			ContextPatterns: []ContextPattern{
+				{Re: bankNameCandidateRe, Validate: isYuchoBankName, Literals: bankNameSuffixes},
+			},
+			NegativeContext:      digitRuleNegativeContext,
+			RequireContextWindow: digitRuleRequireContextWindow,
+			Validate:             validYuchoAccount,
+			Patterns: []Pattern{
+				// 記号（5 桁、先頭は必ず "1"）＋番号（6〜8 桁）をハイフンで
+				// 相関させた表記（例: [5桁の記号]-[6〜8桁の番号]）。記号・番号の
+				// ラベルが別々に書かれる形式（記号: … 番号: …）は将来の拡張対象
+				// とし、誤検出リスクを抑えるためこの表記に限定する。チェック
+				// ディジットの具体式は未確認のため（要追加調査）、全桁同一の
+				// ダミー値のみ Validate で棄却する。
+				{Re: dgNoAlnumHyphen(`1\d{4}-\d{6,8}`), Base: High, RequireContext: true},
 			},
 		},
 		{
@@ -521,6 +573,19 @@ func validPhone(m string) bool {
 		return d[1] >= '5' && d[1] <= '9' && d[2] == '0'
 	}
 	return false
+}
+
+// validYuchoAccount はゆうちょ銀行の記号（5 桁・先頭は必ず "1"）・番号
+// （6〜8 桁）がハイフンで相関した表記かを検証する。記号 4 桁目に意味を持つ
+// チェックディジット式が存在するとされるが、公開情報からは具体式を確認できな
+// かったため（要追加調査）実装していない。全桁同一のダミー値（"11111-111111"
+// 等）だけを明白な非 PII として棄却する。
+func validYuchoAccount(m string) bool {
+	symbol, number, ok := strings.Cut(m, "-")
+	if !ok || len(symbol) != 5 || symbol[0] != '1' || len(number) < 6 || len(number) > 8 {
+		return false
+	}
+	return !checksum.AllSame(symbol) && !checksum.AllSame(number)
 }
 
 // birthdateRe は jp-birthdate の捕捉値（西暦 4 桁 or 和暦元号＋年・月・日）を

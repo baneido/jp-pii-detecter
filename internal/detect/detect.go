@@ -526,16 +526,23 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 			continue
 		}
 		ctxForMatch := func(start, end int, useWindow bool) []string {
-			var kws []string
+			var hay string
 			if r.RequireContextWindow <= 0 {
-				kws = d.matchingContexts(norm, r.Context)
+				hay = norm
 			} else if useWindow {
-				kws = d.matchingContexts(contextWindow(norm, start, end, r.RequireContextWindow, &normRunes), r.Context)
+				hay = contextWindow(norm, start, end, r.RequireContextWindow, &normRunes)
 			} else {
-				kws = d.matchingContexts(norm, r.Context)
+				hay = norm
+			}
+			kws := d.matchingContexts(hay, r.Context)
+			if len(r.ContextPatterns) > 0 {
+				kws = append(kws, matchContextPatterns(hay, r.ContextPatterns)...)
 			}
 			if st := lineCtx.statementFor(start, end); st != nil && st.PositiveText != "" {
 				kws = append(kws, d.matchingContexts(st.PositiveText, r.Context)...)
+				if len(r.ContextPatterns) > 0 {
+					kws = append(kws, matchContextPatterns(st.PositiveText, r.ContextPatterns)...)
+				}
 			}
 			return kws
 		}
