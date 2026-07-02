@@ -1,4 +1,6 @@
-// Command gen は日本郵便の郵便番号データ（UTF-8 KEN_ALL CSV / zip）から、
+// Command gen は internal/dict の埋め込み辞書データを外部データから生成する。
+//
+// 既定（-phone なし）は日本郵便の郵便番号データ（UTF-8 KEN_ALL CSV / zip）から、
 // 7 桁郵便番号の実在集合をビットセットとして生成する。
 //
 // 入力は日本郵便の「住所の郵便番号（1 レコード 1 行、UTF-8）」CSV、または
@@ -13,6 +15,11 @@
 // インデックスのエンコーディングとサイズ定数は dict 側と共有する（無言の乖離を防ぐ）。
 //
 //	go run ./internal/dict/gen -input utf_ken_all.zip -output internal/dict/postal_codes.bitset
+//
+// -phone を指定すると、市外局番の一覧 CSV から internal/dict/area_codes.txt
+// 形式の一覧を生成する（詳細は phone.go を参照）。
+//
+//	go run ./internal/dict/gen -phone -input area_codes_raw.csv -output internal/dict/area_codes.txt
 package main
 
 import (
@@ -29,8 +36,9 @@ import (
 )
 
 func main() {
-	input := flag.String("input", "", "Japan Post UTF-8 KEN_ALL CSV or zip path")
-	output := flag.String("output", "", "output path for postal_codes.bitset (7-digit exact bitset)")
+	input := flag.String("input", "", "input path (postal: UTF-8 KEN_ALL CSV/zip / -phone: area-code CSV)")
+	output := flag.String("output", "", "output path (postal: postal_codes.bitset / -phone: area_codes.txt)")
+	phone := flag.Bool("phone", false, "generate internal/dict/area_codes.txt from an area-code CSV instead of the postal bitset")
 	flag.Parse()
 
 	if *input == "" || *output == "" || flag.NArg() != 0 {
@@ -38,7 +46,11 @@ func main() {
 		os.Exit(2)
 	}
 
-	if err := generatePostal(*input, *output); err != nil {
+	generate := generatePostal
+	if *phone {
+		generate = generatePhone
+	}
+	if err := generate(*input, *output); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}

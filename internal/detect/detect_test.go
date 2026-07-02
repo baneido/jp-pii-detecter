@@ -132,6 +132,11 @@ func TestPhoneRule(t *testing.T) {
 		{"携帯区切りあり", "TEL: " + piifixtures.MustGet(t, "detect.phone_mobile_sep"), []string{"jp-phone-number"}},
 		{"携帯区切りなしコンテキストあり", "携帯 " + piifixtures.MustGet(t, "detect.phone_mobile_nosep"), []string{"jp-phone-number"}},
 		{"固定電話区切りあり", "本社: " + piifixtures.MustGet(t, "detect.phone_fixed_tokyo"), []string{"jp-phone-number"}},
+		{"固定電話区切りあり seed 辞書未収録", "電話: 04992-2-1234", []string{"jp-phone-number"}},
+		// P10（#56）: 固定電話・区切りなし 10 桁。市外局番辞書（dict.ValidAreaCode）による
+		// validPhone 拡張と新パターンで新たに検出可能になった。RequireContext のため
+		// コンテキストキーワードが必須。
+		{"固定電話区切りなしコンテキストあり", "電話番号：" + piifixtures.MustGet(t, "detect.phone_landline_nosep"), []string{"jp-phone-number"}},
 		{"国際表記", piifixtures.MustGet(t, "detect.phone_intl_mobile"), []string{"jp-phone-number"}},
 		{"IP電話", piifixtures.MustGet(t, "detect.phone_ip"), []string{"jp-phone-number"}},
 		{"全角と長音記号", "電話番号：" + piifixtures.MustGet(t, "detect.phone_mobile_fullwidth_longvowel"), []string{"jp-phone-number"}},
@@ -153,6 +158,23 @@ func TestPhoneNoSepWithoutContextIsMedium(t *testing.T) {
 	if fs[0].Confidence != rule.Medium {
 		t.Errorf("confidence = %v, want medium", fs[0].Confidence)
 	}
+}
+
+// P10（#56）: 固定電話・区切りなし 10 桁パターンは RequireContext のため、
+// コンテキストキーワードがなければ市外局番として実在するプレフィックスでも
+// 検出しない。値自体も市外局番辞書（area_codes.txt のシードデータ）に
+// 存在しないプレフィックスなので、実在 PII 形式ではなくインラインで安全。
+func TestPhoneLandlineNoSepRequiresContext(t *testing.T) {
+	d := newDetector(t, "")
+	assertRules(t, d.ScanLine("f.txt", 1, "0212345678"))
+	assertRules(t, d.ScanLine("f.txt", 1, "電話番号：0212345678"))
+}
+
+// P10（#56）: 区切りあり固定電話は area_codes.txt の seed 辞書が未完成でも
+// 取りこぼさない。
+func TestPhoneSepAllowsAreaCodeMissingFromSeedDictionary(t *testing.T) {
+	d := newDetector(t, "")
+	assertRules(t, d.ScanLine("f.txt", 1, "電話番号：04992-2-1234"), "jp-phone-number")
 }
 
 func TestPostalAndAddress(t *testing.T) {
