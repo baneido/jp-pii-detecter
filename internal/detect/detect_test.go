@@ -956,6 +956,89 @@ func TestScanContentRejectsCrossLineNegativeContext(t *testing.T) {
 	assertRules(t, d.ScanContent("f.txt", "口座番号: "+bankAccount+strings.Repeat("あ", 25)+"\n円"), "jp-bank-account")
 }
 
+// 実在の銀行名（辞書照合）は、既存の 8 語 Context が無い典型的な記載形式
+// （銀行名＋支店＋普通/当座）でも jp-bank-account を発火させる。値は
+// 辞書収録の銀行名（実在の固有名詞）とダミーの 7 桁を組み合わせただけで、
+// 実在しうる口座番号ではないため外部フィクスチャなしでテストできる
+// （internal/dict/names_test.go と同じ方針）。
+func TestBankNameContextEnablesDetection(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"銀行名＋支店＋普通（既存 Context 語なし）", "三菱UFJ銀行 渋谷支店 普通 1234567", []string{"jp-bank-account"}},
+		{"銀行名が行頭でなくても検出", "口座は みずほ銀行渋谷支店 普通預金 7654321 です", []string{"jp-bank-account"}},
+		{"辞書未収録の架空銀行名は昇格しない", "架空銀行 渋谷支店 普通 1234567", nil},
+		{"支店・普通単体はいまだに Context ではない", "支店 普通 1234567", nil},
+		{"銀行名が 40 ルーン窓の外だと届かない", "みずほ銀行" + strings.Repeat("あ", 40) + "1234567", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// 銀行名の辞書照合は RequireContext の前提であり信頼度昇格の根拠にはならない
+// （TestContextRequiredConfidenceNotPromoted と同じ不変条件）ため、Base の
+// medium のまま報告される。
+func TestBankNameContextDoesNotPromoteConfidence(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanLine("f.txt", 1, "三菱UFJ銀行 渋谷支店 普通 1234567")
+	assertRules(t, fs, "jp-bank-account")
+	if fs[0].Confidence != rule.Medium {
+		t.Fatalf("confidence = %v, want medium", fs[0].Confidence)
+	}
+}
+
+// 銀行名の辞書照合を追加しても、既存の金額・数量ネガティブコンテキストは
+// 引き続き検出を抑制する。
+func TestBankNameContextStillRejectsNegativeContext(t *testing.T) {
+	d := newDetector(t, "")
+	assertRules(t, d.ScanLine("f.txt", 1, "みずほ銀行の株価は1234567円です"))
+	assertRules(t, d.ScanLine("f.txt", 1, "管理番号1234567（みずほ銀行の資料）"))
+}
+
+// ゆうちょ銀行の記号番号（記号5桁・先頭は必ず1、番号6〜8桁をハイフンで相関）。
+// 値はダミーの数字列と辞書収録の「ゆうちょ銀行」表記のみを使い、外部フィクスチャ
+// なしでテストできる。
+func TestYuchoAccountRule(t *testing.T) {
+	d := newDetector(t, "")
+	tests := []struct {
+		name, line string
+		want       []string
+	}{
+		{"記号番号＋ゆうちょ表記", "ゆうちょ銀行 記号12340-7654321", []string{"jp-yucho-account"}},
+		{"記号番号＋記号ラベル", "記号12345-1234567 ゆうちょ口座", []string{"jp-yucho-account"}},
+		{"コンテキストなしは検出しない", "12345-1234567", nil},
+		{"記号が1始まりでない", "記号22345-1234567 ゆうちょ", nil},
+		{"記号が全桁同一のダミー値", "記号11111-111111 ゆうちょ", nil},
+		{"番号が全桁同一のダミー値", "記号12345-9999999 ゆうちょ", nil},
+		{"金額の負コンテキストで抑制", "ゆうちょ記号12345-1234567円", nil},
+		{"長い数字列の一部は対象外", "8" + "12345-1234567" + " ゆうちょ", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertRules(t, d.ScanLine("f.txt", 1, tt.line), tt.want...)
+		})
+	}
+}
+
+// jp-yucho-account の RequireContext パターンも Base の High のまま報告される
+// （RequireContext は昇格の根拠にならない不変条件）。
+func TestYuchoAccountConfidenceIsBaseHigh(t *testing.T) {
+	d := newDetector(t, "")
+	fs := d.ScanLine("f.txt", 1, "ゆうちょ銀行 記号12340-7654321")
+	assertRules(t, fs, "jp-yucho-account")
+	if fs[0].Confidence != rule.High {
+		t.Fatalf("confidence = %v, want high", fs[0].Confidence)
+	}
+	if fs[0].Match != "12340-7654321" {
+		t.Fatalf("match = %q, want 12340-7654321", fs[0].Match)
+	}
+}
+
 func TestScanContentUsesSourceContext(t *testing.T) {
 	d := newDetector(t, "")
 	assertRules(t, d.ScanContent("user.ts", `const bankAccountNo = "1234567"`), "jp-bank-account")
