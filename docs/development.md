@@ -130,9 +130,13 @@ internal/
      statement の値範囲は正規化済み行の byte offset で持ち、候補マッチがその範囲内にある場合だけ
      `PositiveText` / `NegativeText` を適用する。AST 解析や言語別 parser は使わない。
    - 各ルールのパターンを正規表現でマッチし、`Validate`（チェックディジット等）と
-     allowlist で絞り込む。同一行にコンテキストキーワードがあれば信頼度を High に昇格、
-     `RequireContext` のルールはキーワードがなければ破棄する。`RequireContextWindow`
-     が設定されたルールでは、キーワードをマッチ前後の指定ルーン数以内に限定する。
+     allowlist で絞り込む。マッチ前後 `promotionContextWindowRunes`（既定 40 ルーン、
+     `RequireContextWindow` を設定したルールはその値）以内にコンテキストキーワードが
+     あれば信頼度を High に昇格する。窓を掛けずに行全体を見ると、minified JSON や
+     長い 1 行でキーワードが 1 個あるだけで行内の全マッチが昇格してしまうため。
+     `RequireContext` のルールはキーワードがなければ破棄する。こちらの判定は
+     `RequireContextWindow` が未設定（0）なら後方互換で行全体を見る（昇格判定と
+     フォールバック挙動が異なる点に注意）。
      ASCII キーワードは英数字の単語境界つきで照合し、`tel` が `hotel` の一部で成立する
      ような誤昇格を避ける。単語境界で見つからない場合は、行中の識別子を camelCase /
      snake_case / kebab-case の構成語に分割して照合するため、`account_no` が
@@ -163,7 +167,8 @@ internal/
     Description: "説明（rules コマンドと検出結果に表示される）",
     Context:              []string{"キーワード"}, // 小文字で定義。昇格・RequireContext 判定に使う
     NegativeContext:      []string{"円", "件"}, // 近傍にあれば棄却する語（任意）
-    RequireContextWindow: 40,          // 0 なら行全体、正数なら前後ルーン数で近接判定
+    RequireContextWindow: 40,          // RequireContext 判定は 0 なら行全体、正数なら前後ルーン数。
+                                        // High 昇格判定は未設定でも常に窓あり（既定 40 ルーン）。
     Prefilter:            PrefilterDigit, // 数字を含む行のみ走査（性能最適化。既定は常に走査）
     Validate: func(m string) bool {   // 追加検証（任意）。引数は正規化済みのマッチ文字列
         return checksum.Something(m)

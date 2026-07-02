@@ -17,6 +17,15 @@ const IgnoreMarker = "jp-pii-detector:ignore"
 // AllowMarker は後方互換のために残している旧除外マーカー。
 const AllowMarker = "pii-allow"
 
+// promotionContextWindowRunes は Base<High パターンの High 昇格判定で肯定語を
+// 探すルーン数（前後）の既定値。rule.RequireContextWindow を明示しないルール
+// （jp-my-number・jp-phone-number・jp-address-high-recall）の昇格判定でのみ
+// 使うフォールバック値。RequireContext 判定自体の窓（rule.Rule.RequireContextWindow）
+// とは別物: そちらは未設定なら後方互換で行全体を見るのに対し、こちらは昇格が
+// 検出条件ではなく補助情報のため、常に窓を掛ける（#54）。値は他の digit 系
+// ルールが使う rule.digitRuleRequireContextWindow と同じ 40 に揃えている。
+const promotionContextWindowRunes = 40
+
 // Finding は 1 件の検出結果。
 //
 // 注意: この型は出力スキーマではない。機械可読な出力（json/sarif 等）は
@@ -525,15 +534,29 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 		if len(r.PrefilterLiterals) > 0 && !containsAnyLiteral(norm, r.PrefilterLiterals) {
 			continue
 		}
-		ctxForMatch := func(start, end int, useWindow bool) []string {
+		// ctxForMatch は RequireContext 判定（検出そのものの成立条件）に使う。
+		// RequireContextWindow が設定されていればその窓、未設定なら後方互換で
+		// 行全体を見る（rule.RequireContextWindow のドキュメント参照）。
+		ctxForMatch := func(start, end int) []string {
 			var kws []string
 			if r.RequireContextWindow <= 0 {
 				kws = d.matchingContexts(norm, r.Context)
-			} else if useWindow {
-				kws = d.matchingContexts(contextWindow(norm, start, end, r.RequireContextWindow, &normRunes), r.Context)
 			} else {
-				kws = d.matchingContexts(norm, r.Context)
+				kws = d.matchingContexts(contextWindow(norm, start, end, r.RequireContextWindow, &normRunes), r.Context)
 			}
+			if st := lineCtx.statementFor(start, end); st != nil && st.PositiveText != "" {
+				kws = append(kws, d.matchingContexts(st.PositiveText, r.Context)...)
+			}
+			return kws
+		}
+		// promotionCtx は Base<High パターンの High 昇格判定に使う。RequireContext と
+		// 違い肯定語は「あれば信頼度を上げる」だけの補助情報であり検出の成立条件では
+		// ないため、ctxForMatch と違って行全体無制限にはしない。無制限だと minified
+		// JSON や長い 1 行でキーワードが 1 個あるだけで行内の全マッチが昇格してしまう
+		// （#54）。RequireContextWindow を明示しないルール（jp-my-number 等）は
+		// promotionContextWindowRunes にフォールバックする。
+		promotionCtx := func(start, end, window int) []string {
+			kws := d.matchingContexts(contextWindow(norm, start, end, window, &normRunes), r.Context)
 			if st := lineCtx.statementFor(start, end); st != nil && st.PositiveText != "" {
 				kws = append(kws, d.matchingContexts(st.PositiveText, r.Context)...)
 			}
@@ -582,7 +605,7 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 					ContextWindow:  r.RequireContextWindow,
 				}
 				if p.RequireContext {
-					kws := ctxForMatch(start, end, true)
+					kws := ctxForMatch(start, end)
 					if len(kws) == 0 {
 						continue
 					}
@@ -611,10 +634,15 @@ func (d *Detector) scanLineNoIgnoreWithContext(file string, lineNo int, line str
 				// （口座番号などの△ルールが常に high になるのを防ぐ）。
 				conf := p.Base
 				if !p.RequireContext && conf < rule.High {
-					kws := ctxForMatch(start, end, false)
+					window := r.RequireContextWindow
+					if window <= 0 {
+						window = promotionContextWindowRunes
+					}
+					kws := promotionCtx(start, end, window)
 					if len(kws) > 0 {
 						reason.ContextKeywords = kws
 						reason.ContextPromoted = true
+						reason.ContextWindow = window
 						conf = rule.High
 					}
 				}
