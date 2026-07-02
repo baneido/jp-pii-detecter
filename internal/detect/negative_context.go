@@ -8,6 +8,12 @@ import (
 
 const negativeContextWindowRunes = 20
 
+// lineIdx は隣接行相関で検出された finding が乗る行（0 始まり）。前後の
+// 論理隣接行（間が空白のみで最大 maxAdjacentLineGap 行差までの非空白行）を
+// 見て負コンテキストを判定する。ScanContent の隣接行相関（scanAdjacentLines）が
+// 空行を挟んだラベルまで届くようになったのに合わせ、ここも同じ規則で空行を
+// スキップしないと、口座番号の直後に空行を挟んだ先に金額の単位（円）が
+// 続くようなケースで、負コンテキストによる抑制を取りこぼす。
 func (d *Detector) hasCrossLineNegativeContext(f Finding, lines []string, lineIdx int) bool {
 	if lineIdx < 0 || lineIdx >= len(lines) {
 		return false
@@ -25,8 +31,8 @@ func (d *Detector) hasCrossLineNegativeContext(f Finding, lines []string, lineId
 
 	var parts []string
 	offset := 0
-	if lineIdx > 0 {
-		prev := normalize.Line(lines[lineIdx-1])
+	if p := prevNonBlankIndex(lines, lineIdx, maxAdjacentLineGap); p >= 0 {
+		prev := normalize.Line(lines[p])
 		parts = append(parts, prev)
 		offset = len(prev) + 1 // 改行 1 バイト分
 	}
@@ -38,8 +44,8 @@ func (d *Detector) hasCrossLineNegativeContext(f Finding, lines []string, lineId
 	byteStart := len(string(currRunes[:f.start]))
 	byteEnd := len(string(currRunes[:f.end]))
 	parts = append(parts, curr)
-	if lineIdx+1 < len(lines) {
-		parts = append(parts, normalize.Line(lines[lineIdx+1]))
+	if n := nextNonBlankIndex(lines, lineIdx, maxAdjacentLineGap); n >= 0 {
+		parts = append(parts, normalize.Line(lines[n]))
 	}
 
 	combined := strings.Join(parts, "\n")
