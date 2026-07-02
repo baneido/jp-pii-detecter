@@ -96,8 +96,12 @@ var (
 	// personNameLabelASCIIStrong は語そのものが「人」を表す ASCII キー。
 	// 辞書照合なしで検出する（収録外の人名も拾う）。user_name / account_name /
 	// contact_name はハンドル名・システム名でありうるため強ラベルには入れず、
-	// 辞書照合つきの弱ラベル側で扱う。
-	personNameLabelASCIIStrong = `(?:full_?name|customer_?name|patient_?name|applicant_?name)`
+	// 辞書照合つきの弱ラベル側で扱う。normalize は ASCII の大小文字を変換しない
+	// ため、`(?i:...)` で FULL_NAME: / CustomerName: のような大文字・キャメル
+	// ケース表記も拾う（#48）。あわせて PrefilterLiterals 側
+	// （containsAnyLiteral）も大文字小文字を無視しないと、正規表現に到達する前に
+	// 行がスキップされてしまう点に注意。
+	personNameLabelASCIIStrong = `(?i:full_?name|customer_?name|patient_?name|applicant_?name)`
 	// personNameBoundary は強・弱ラベル共通の前方境界。識別子連結文字
 	// （英数字・_）に加えて漢字・かなも禁止し、登録名前 / 会社名 / 変数名前 のように
 	// ラベル語が複合名詞の一部になっているケースを除外する。
@@ -109,12 +113,19 @@ var (
 	// personNameSep はラベルと値の区切り。キー側の閉じ引用符（"name":）と
 	// 値側の開き引用符・括弧（: "山田" / ：「山田」）の両方を許容する。
 	personNameSep = `["']?\s*[:=]\s*["'「『（(]?\s*`
+	// personNameSepOrBracket は personNameSep に加え、コロン・イコールなしで
+	// 鉤括弧・丸括弧が値に直結するケース（ご氏名「田中美咲」等）も区切りとして
+	// 許容する。強いラベル（personNameLabelJP / personNameLabelASCIIStrong）専用。
+	// 弱いラベル（姓・名 等）は日常語との衝突を避けるため personNameSep のまま
+	// コロン必須とする（#48）。
+	personNameSepOrBracket = `(?:` + personNameSep + `|[「『（(])`
 	// personNameValue は氏名の値（漢字・かな・カナ列。任意で半角スペース
-	// 区切りの 2 語）。強いラベル用に 2 文字以上を要求する。
+	// 区切りの 2 語）。強いラベル用に 2 文字以上を要求する。カタカナ中黒
+	// （U+30FB、「ジョン・スミス」等）も値の一部として許容する（#48）。
 	// 既知の軽微な限界: `氏名: 山田 様` のように値の後に敬称が続くと、敬称まで
 	// マスク対象に含まれうる（検出の成否・評価には影響しない表示上の過剰取り込み）。
-	personNameValue = `[` + kanji + hiragana + katakana + `]{2,12}` +
-		`(?:[ ][` + kanji + hiragana + katakana + `]{1,12})?`
+	personNameValue = `[` + kanji + hiragana + katakana + `\x{30FB}]{2,12}` +
+		`(?:[ ][` + kanji + hiragana + katakana + `\x{30FB}]{1,12})?`
 	// personNameValueShort は弱いラベル（姓・名の単一フィールド）用。1 文字も
 	// 捕捉し、長さ・人名らしさの最終判断は validSurnameField 等の検証器に委ねる。
 	personNameValueShort = `[` + kanji + hiragana + katakana + `]{1,12}` +
@@ -167,20 +178,25 @@ func notOrgName(v string) bool {
 // 弱いラベル（姓・名・last_name 等）の値検証。1 文字の単独要素は日常語と
 // 衝突しやすいため、単独要素は 2 文字以上かつラベル種別（姓/名）に一致する
 // 場合のみ許可する。「姓 + 名」に分割できる完全な氏名はラベル種別を問わず許可する。
-func validSurnameField(v string) bool { return validNameField(v, true, false) }
-func validGivenField(v string) bool   { return validNameField(v, false, true) }
+//
+// 例外: 姓ラベル（姓/名字/苗字/last_name）専用の validSurnameField のみ、
+// 辞書収録済みの実在 1 文字姓（林・森・原・東 等 75 件）を allow1CharSurname
+// で許可する（#48）。名フィールド・姓名不定フィールドは「名: 東」のような
+// 方角語等との衝突を避けるため現状どおり 1 文字を許可しない。
+func validSurnameField(v string) bool { return validNameFieldOpt(v, true, false, true) }
+func validGivenField(v string) bool   { return validNameFieldOpt(v, false, true, false) }
 
 // validFullNameField は姓・名のいずれか、または姓+名に分割できる値を許可する
 // （name / user_name など姓名どちらが入るか不定のフィールド用）。
-func validFullNameField(v string) bool { return validNameField(v, true, true) }
+func validFullNameField(v string) bool { return validNameFieldOpt(v, true, true, false) }
 
-func validNameField(v string, allowSurname, allowGiven bool) bool {
+func validNameFieldOpt(v string, allowSurname, allowGiven, allow1CharSurname bool) bool {
 	v = strings.TrimSpace(v)
 	if dict.SplitsAsFullName(v) {
 		return true
 	}
 	if len([]rune(v)) < 2 {
-		return false
+		return allow1CharSurname && allowSurname && dict.IsSurname(v)
 	}
 	return (allowSurname && dict.IsSurname(v)) || (allowGiven && dict.IsGivenName(v))
 }
@@ -399,10 +415,12 @@ func Builtin() []Rule {
 				// 問わず（収録外の人名も拾うため）辞書照合はしない。前方境界
 				// personNameBoundary で漢字・かな直後（登録名前: 等）を除外する。
 				// JSON/YAML のキー引用符（"氏名":）と値の引用符・括弧にも対応。
+				// personNameSepOrBracket により、コロンなしで鉤括弧が直結する
+				// 「ご氏名「田中美咲」」のようなケースも区切りとして許容する（#48）。
 				{Re: regexp.MustCompile(
 					personNameBoundary +
 						`(?:` + personNameLabelJP + `|` + personNameLabelASCIIStrong + `)` +
-						personNameSep +
+						personNameSepOrBracket +
 						`(` + personNameValue + `)`,
 				), Base: Low},
 				// 弱いラベル: 姓側（姓・名字・苗字・last_name）。単独要素は 2 文字以上の
@@ -434,9 +452,10 @@ func Builtin() []Rule {
 				// 裸の name ラベル。kebab-case / dotted key（project-name /
 				// project.name 等）の末尾 name を誤検出しないよう前方境界で `-` `.`
 				// も禁止し、値は姓名辞書で検証する（name: 株式会社 等を棄却）。
+				// `(?i:name)` により NAME: / Name: のような大文字表記も拾う（#48）。
 				{Re: regexp.MustCompile(
 					personNameBareNameBoundary +
-						`name` +
+						`(?i:name)` +
 						personNameSep +
 						`(` + personNameValueShort + `)`,
 				), Base: Low, Validate: validFullNameField},
